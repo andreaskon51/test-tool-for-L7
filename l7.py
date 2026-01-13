@@ -18,22 +18,32 @@ def load_proxies():
     global proxy_list
     try:
         with open('proxies.txt', 'r') as f:
-            proxy_list = [line.strip() for line in f if line.strip()]
+            raw_proxies = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+            # Process proxies - add http:// if no protocol specified
+            for proxy in raw_proxies:
+                if proxy.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                    proxy_list.append(proxy)
+                else:
+                    # Format: ip:port - add http:// prefix
+                    proxy_list.append(f'http://{proxy}')
         if proxy_list:
             print(f"[✅] Loaded {len(proxy_list)} proxies from proxies.txt")
             return True
     except FileNotFoundError:
         print("[⚠️] proxies.txt not found. Create it with one proxy per line.")
-        print("Format: http://ip:port or socks5://ip:port")
+        print("Format: ip:port or http://ip:port or socks5://ip:port")
     
     # Manual proxy input
     manual = input("Enter proxies manually? (y/n): ").strip().lower()
     if manual == 'y':
-        print("Enter proxies (one per line, empty line to finish):")
+        print("Enter proxies (one per line, format: ip:port, empty line to finish):")
         while True:
             proxy = input().strip()
             if not proxy:
                 break
+            # Add http:// if no protocol specified
+            if not proxy.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                proxy = f'http://{proxy}'
             proxy_list.append(proxy)
         if proxy_list:
             print(f"[✅] Added {len(proxy_list)} proxies")
