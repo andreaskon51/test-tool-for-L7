@@ -190,6 +190,25 @@ def discover_origin_ips(domain):
         print("[!] No origin IPs found, using domain directly")
         return [domain]
 
+# ============= URL VALIDATION =============
+def validate_url(url):
+    """Validate and fix URL format"""
+    url = url.strip()
+    
+    # Add protocol if missing
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+        print(f"[*] Added HTTPS protocol: {url}")
+    
+    # Validate URL structure
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            raise ValueError("Invalid URL format")
+        return url
+    except Exception as e:
+        raise ValueError(f"Invalid URL: {e}")
+
 # ============= CACHE BUSTING =============
 def add_cache_buster(url):
     """Add cache-busting parameters"""
@@ -453,7 +472,15 @@ def main():
     choice = input("\n[>] Select attack (1-5): ").strip()
     
     if choice in ['1', '2', '3', '5']:
-        url = input("[>] Enter target URL: ").strip()
+        url = input("[>] Enter target URL (e.g., example.com or https://example.com): ").strip()
+        
+        # Validate and fix URL
+        try:
+            url = validate_url(url)
+        except ValueError as e:
+            print(f"[!] {e}")
+            return
+        
         duration = int(input("[>] Duration (seconds): "))
         threads = int(input("[>] Number of threads (10-200): "))
         
