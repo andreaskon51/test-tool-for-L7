@@ -232,6 +232,10 @@ function createTLSAgent(profile, proxyUrl = null) {
         scheduling: 'fifo'
     };
     
+    if (profile.tls.sigalgs) {
+        tlsOptions.sigalgs = profile.tls.sigalgs;
+    }
+    
     let agent;
     if (proxyUrl) {
         agent = proxyUrl.startsWith('https') 
