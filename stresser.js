@@ -223,7 +223,7 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 2000) {
+async function testProxy(proxyUrl, timeout = 1500) {
     try {
         const agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl)
@@ -259,25 +259,36 @@ async function loadProxies(filePath = 'proxies.txt') {
             return false;
         }
         
-        console.log(`[*] Loading ${raw.length} proxies...`);
-        console.log('[*] Fast validation starting (250 parallel)...');
+        console.log('\n' + '='.repeat(70));
+        console.log(`[*] PROXY VALIDATION STARTING`);
+        console.log(`[*] Total proxies to test: ${raw.length}`);
+        console.log(`[*] Concurrency: 500 parallel tests`);
+        console.log(`[*] Timeout per proxy: 1500ms`);
+        console.log(`[*] Test endpoint: http://www.google.com`);
+        console.log('='.repeat(70));
         
         const temp = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
         );
         
         const startTime = Date.now();
-        const chunkSize = 250;
+        const chunkSize = 500;
         let validCount = 0;
+        let tested = 0;
+        const recentValid = [];
+        
+        console.log('\n[*] Starting validation...');
+        console.log('[*] Valid proxies will be shown below:\n');
         
         for (let i = 0; i < temp.length; i += chunkSize) {
             const chunk = temp.slice(i, i + chunkSize);
-            const progress = i + chunk.length;
+            const batchStart = Date.now();
             
             const results = await Promise.allSettled(
-                chunk.map(async proxy => {
-                    const valid = await testProxy(proxy, 2000);
-                    return { proxy, valid };
+                chunk.map(async (proxy, idx) => {
+                    const valid = await testProxy(proxy, 1500);
+                    const proxyDisplay = proxy.replace(/^https?:\/\//, '');
+                    return { proxy, valid, proxyDisplay };
                 })
             );
             
@@ -285,19 +296,58 @@ async function loadProxies(filePath = 'proxies.txt') {
                 if (result.status === 'fulfilled' && result.value.valid) {
                     config.proxies.push(result.value.proxy);
                     validCount++;
+                    recentValid.push(result.value.proxyDisplay);
+                    
+                    if (recentValid.length <= 20 || validCount % 10 === 0) {
+                        console.log(`  [+] VALID: ${result.value.proxyDisplay}`);
+                    }
                 }
             });
             
-            process.stdout.write(`\r[*] Progress: ${progress}/${temp.length} | Working: ${validCount}`);
+            tested += chunk.length;
+            const batchTime = (Date.now() - batchStart) / 1000;
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = Math.floor(tested / elapsed);
+            const remaining = temp.length - tested;
+            const eta = Math.floor(remaining / speed);
+            
+            const percent = ((tested / temp.length) * 100).toFixed(1);
+            const successRate = ((validCount / tested) * 100).toFixed(1);
+            
+            console.log(`\n[${'='.repeat(Math.floor(percent / 2))}${' '.repeat(50 - Math.floor(percent / 2))}] ${percent}%`);
+            console.log(`[*] Tested: ${tested}/${temp.length} | Valid: ${validCount} (${successRate}%)`);
+            console.log(`[*] Speed: ${speed} proxies/sec | Batch time: ${batchTime.toFixed(1)}s | ETA: ${eta}s`);
+            
+            if (i + chunkSize < temp.length) {
+                console.log(`[*] Testing next batch of ${Math.min(chunkSize, temp.length - tested)} proxies...\n`);
+            }
         }
         
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n\n[+] Validation complete in ${totalTime}s`);
-        console.log(`[+] Loaded ${config.proxies.length} working proxies from ${temp.length} total`);
+        const avgSpeed = Math.floor(temp.length / (Date.now() - startTime) * 1000);
+        
+        console.log('\n' + '='.repeat(70));
+        console.log('[+] VALIDATION COMPLETE!');
+        console.log('='.repeat(70));
+        console.log(`[+] Total time: ${totalTime}s`);
+        console.log(`[+] Average speed: ${avgSpeed} proxies/sec`);
+        console.log(`[+] Working proxies: ${config.proxies.length}/${temp.length}`);
         console.log(`[+] Success rate: ${((config.proxies.length / temp.length) * 100).toFixed(1)}%`);
+        
+        if (config.proxies.length > 0) {
+            console.log(`[+] Sample working proxies:`);
+            const samples = recentValid.slice(0, 10);
+            samples.forEach(proxy => console.log(`    - ${proxy}`));
+            if (recentValid.length > 10) {
+                console.log(`    ... and ${recentValid.length - 10} more`);
+            }
+        }
+        
+        console.log('='.repeat(70) + '\n');
         
         if (config.proxies.length === 0) {
             console.log('[!] NO WORKING PROXIES FOUND!');
+            console.log('[!] Check your proxy list quality');
             return false;
         }
         
