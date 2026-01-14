@@ -226,8 +226,14 @@ function createTLSAgent(profile, proxyUrl = null) {
         sessionTimeout: 300,
         keepAlive: true,
         keepAliveMsecs: 1000,
-            maxSockets: 1024,
-            maxFreeSockets: 512,
+        maxSockets: 1024,
+        maxFreeSockets: 512,
+        timeout: 5000,
+        scheduling: 'fifo'
+    };
+    
+    let agent;
+    if (proxyUrl) {
         agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl, tlsOptions)
             : new HttpProxyAgent(proxyUrl);
@@ -802,8 +808,12 @@ class HTTPFlood {
                             rejectUnauthorized: false,
                             keepAlive: true,
                             keepAliveMsecs: 1000,
-                        maxSockets: 2048,
-                        maxFreeSockets: 1024,
+                            maxSockets: 2048,
+                            maxFreeSockets: 1024,
+                            timeout: 10000
+                        };
+                        
+                        cachedAgent = isHttpsTarget
                             ? new HttpsProxyAgent(proxy, agentOptions)
                             : new HttpProxyAgent(proxy, agentOptions);
                         lastProxyIndex = proxyIndex;
