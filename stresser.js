@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
@@ -317,86 +319,6 @@ async function resolveViaDoH(domain) {
         }
     } catch (err) {
         // Fallback to system DNS
-    }
-    
-    return domain;
-}
-
-function updateProxyHealth(proxyUrl, success, latency) {
-    if (!config.proxyHealth.has(proxyUrl)) {
-        config.proxyHealth.set(proxyUrl, {
-            success: 0,
-            fails: 0,
-            totalLatency: 0,
-            requests: 0,
-            score: 100
-        });
-    }
-    
-    const health = config.proxyHealth.get(proxyUrl);
-    health.requests++;
-    
-    if (success) {
-        health.success++;
-        health.totalLatency += latency;
-    } else {
-        health.fails++;
-    }
-    
-    const successRate = health.success / health.requests;
-    const avgLatency = health.totalLatency / health.success || 9999;
-    health.score = (successRate * 70) + ((1000 - Math.min(avgLatency, 1000)) / 1000 * 30);
-}
-
-function getHealthyProxy() {
-    if (config.proxies.length === 0) return null;
-    
-    const healthyProxies = config.proxies.filter(proxy => {
-        const health = config.proxyHealth.get(proxy);
-        return !health || health.score > 30;
-    });
-    
-    if (healthyProxies.length === 0) {
-        config.proxyHealth.clear();
-        return getRandomElement(config.proxies);
-    }
-    
-    healthyProxies.sort((a, b) => {
-        const scoreA = config.proxyHealth.get(a)?.score || 100;
-        const scoreB = config.proxyHealth.get(b)?.score || 100;
-        return scoreB - scoreA;
-    });
-    
-    const topTier = healthyProxies.slice(0, Math.ceil(healthyProxies.length * 0.3));
-    return getRandomElement(topTier);
-}
-
-async function resolveViaDoH(domain) {
-    if (config.dnsCache.has(domain)) {
-        return config.dnsCache.get(domain);
-    }
-    
-    try {
-        const dohProviders = [
-            'https://cloudflare-dns.com/dns-query',
-            'https://dns.google/resolve',
-            'https://dns.quad9.net/dns-query'
-        ];
-        
-        const provider = getRandomElement(dohProviders);
-        const response = await axios.get(provider, {
-            params: { name: domain, type: 'A' },
-            headers: { 'Accept': 'application/dns-json' },
-            timeout: 3000
-        });
-        
-        if (response.data && response.data.Answer) {
-            const ip = response.data.Answer[0].data;
-            config.dnsCache.set(domain, ip);
-            return ip;
-        }
-    } catch (err) {
-        // Fallback to system DNS through proxy
     }
     
     return domain;
