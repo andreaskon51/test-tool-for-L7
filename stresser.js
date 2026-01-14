@@ -480,11 +480,11 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
         
         console.log(`[*] Validating ${proxyList.length} proxies against target...`);
         console.log(`[*] Testing: ${targetUrl}`);
-        console.log(`[*] Timeout: 5000ms | Concurrency: 50`);
+        console.log(`[*] Timeout: 3000ms | Concurrency: 300`);
         console.log('='.repeat(70) + '\n');
         
         const startTime = Date.now();
-        const chunkSize = 50;
+        const chunkSize = 300;
         let totalValid = 0;
         let totalTested = 0;
         
@@ -505,7 +505,7 @@ async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateP
                         const response = await axios.get(targetUrl, {
                             httpAgent: agent,
                             httpsAgent: agent,
-                            timeout: 5000,
+                            timeout: 3000,
                             validateStatus: () => true,
                             maxRedirects: 5
                         });
