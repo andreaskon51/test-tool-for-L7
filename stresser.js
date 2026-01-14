@@ -17,13 +17,13 @@ const { URL } = require('url');
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const BANNER = `
-╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V6.2 - M2 OPTIMIZED           ║
-║    Proxy Validation + RPS Control + CF Compatible         ║
-║    ✓ 2 Concurrent/Thread    ✓ RPS Limiter Feature        ║
-║    ✓ 10000ms Proxy Timeout  ✓ Auto Bad Proxy Skip        ║
-║    ✓ JA3 Randomization      ✓ 10-25K RPS with Proxies    ║
-╚══════════════════════════════════════════════════════════╝
++==============================================================+
+|    ADVANCED STRESS TESTER V6.2 - M2 OPTIMIZED               |
+|    Proxy Validation + RPS Control + CF Compatible           |
+|    > 2 Concurrent/Thread    > RPS Limiter Feature           |
+|    > 10000ms Proxy Timeout  > Auto Bad Proxy Skip           |
+|    > JA3 Randomization      > 10-25K RPS with Proxies       |
++==============================================================+
 `;
 
 const BROWSER_PROFILES = [
