@@ -1305,7 +1305,7 @@ async function main() {
         const method = choice === '1' ? 'GET' : choice === '2' ? 'POST' : 'HEAD';
         
         const attack = new HTTPFlood(finalUrl, duration, threads, method, useOrigin);
-        await attack.start();
+        await attack.start();n
     } else {
         console.log('[!] Invalid choice!');
     }
