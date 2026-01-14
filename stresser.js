@@ -224,7 +224,7 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 2000) {
+async function testProxy(proxyUrl, timeout = 1500) {
     try {
         const agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl)
@@ -266,21 +266,21 @@ async function loadProxies(filePath = 'proxies.txt') {
         );
         
         console.log('[*] Testing proxies for working connections (REQUIRED)...');
-        console.log('[*] Using 300 parallel tests for ultra-fast validation...');
+        console.log('[*] Using 200 parallel tests for fast validation...');
+        console.log('[*] This may take 10-30 seconds depending on proxy quality...');
         
         let tested = 0;
         let validCount = 0;
         
-        const chunkSize = 300;
+        const chunkSize = 200;
         for (let i = 0; i < temp.length; i += chunkSize) {
             const chunk = temp.slice(i, i + chunkSize);
+            
+            console.log(`[*] Testing batch ${Math.floor(i / chunkSize) + 1}/${Math.ceil(temp.length / chunkSize)}...`);
+            
             const results = await Promise.all(
                 chunk.map(async proxy => {
-                    const isValid = await testProxy(proxy, 2000);
-                    tested++;
-                    if (tested % 100 === 0 || tested === temp.length) {
-                        console.log(`[*] Progress: ${tested}/${temp.length} tested | ${validCount} working`);
-                    }
+                    const isValid = await testProxy(proxy, 1500);
                     return { proxy, isValid };
                 })
             );
@@ -291,6 +291,9 @@ async function loadProxies(filePath = 'proxies.txt') {
                     validCount++;
                 }
             });
+            
+            tested += chunk.length;
+            console.log(`[*] Progress: ${tested}/${temp.length} tested | ${validCount} working so far`);
         }
         
         if (config.proxies.length === 0) {
