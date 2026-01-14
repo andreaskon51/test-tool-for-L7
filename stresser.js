@@ -1,6 +1,3 @@
-
-#!/usr/bin/env node
-
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
