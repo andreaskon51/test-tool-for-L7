@@ -904,7 +904,7 @@ class HTTPFlood {
         console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
         console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + 10 redirects + realistic navigation${colors.reset}`);
         console.log(`${colors.green}${icons.info} Protocol: ${colors.bright}HTTP/1.1 + HTTP/2${colors.reset}${colors.green} with TLS fingerprinting${colors.reset}`);
-        console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}${profile.name}${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
+        console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}5 Browser Profiles${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
         console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
         const baseRPS = config.proxies.length > 0 ? 250 : 500;
