@@ -223,7 +223,7 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 1500) {
+async function testProxy(proxyUrl, timeout = 1000) {
     try {
         const agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl)
@@ -262,8 +262,8 @@ async function loadProxies(filePath = 'proxies.txt') {
         console.log('\n' + '='.repeat(70));
         console.log(`[*] PROXY VALIDATION STARTING`);
         console.log(`[*] Total proxies to test: ${raw.length}`);
-        console.log(`[*] Concurrency: 500 parallel tests`);
-        console.log(`[*] Timeout per proxy: 1500ms`);
+        console.log(`[*] Concurrency: 300 parallel tests`);
+        console.log(`[*] Timeout per proxy: 1000ms`);
         console.log(`[*] Test endpoint: http://www.google.com`);
         console.log('='.repeat(70));
         
@@ -272,7 +272,7 @@ async function loadProxies(filePath = 'proxies.txt') {
         );
         
         const startTime = Date.now();
-        const chunkSize = 500;
+        const chunkSize = 300;
         let validCount = 0;
         let tested = 0;
         const recentValid = [];
@@ -284,13 +284,22 @@ async function loadProxies(filePath = 'proxies.txt') {
             const chunk = temp.slice(i, i + chunkSize);
             const batchStart = Date.now();
             
+            console.log(`[*] Testing batch ${Math.floor(i/chunkSize) + 1}/${Math.ceil(temp.length/chunkSize)} (${chunk.length} proxies)...`);
+            
+            let completed = 0;
             const results = await Promise.allSettled(
                 chunk.map(async (proxy, idx) => {
-                    const valid = await testProxy(proxy, 1500);
+                    const valid = await testProxy(proxy, 1000);
+                    completed++;
+                    if (completed % 50 === 0 || completed === chunk.length) {
+                        process.stdout.write(`\r  [*] Testing: ${completed}/${chunk.length} completed in batch...`);
+                    }
                     const proxyDisplay = proxy.replace(/^https?:\/\//, '');
                     return { proxy, valid, proxyDisplay };
                 })
             );
+            
+            process.stdout.write('\r' + ' '.repeat(60) + '\r');
             
             results.forEach(result => {
                 if (result.status === 'fulfilled' && result.value.valid) {
@@ -309,18 +318,14 @@ async function loadProxies(filePath = 'proxies.txt') {
             const elapsed = (Date.now() - startTime) / 1000;
             const speed = Math.floor(tested / elapsed);
             const remaining = temp.length - tested;
-            const eta = Math.floor(remaining / speed);
+            const eta = remaining > 0 ? Math.floor(remaining / speed) : 0;
             
             const percent = ((tested / temp.length) * 100).toFixed(1);
             const successRate = ((validCount / tested) * 100).toFixed(1);
             
             console.log(`\n[${'='.repeat(Math.floor(percent / 2))}${' '.repeat(50 - Math.floor(percent / 2))}] ${percent}%`);
             console.log(`[*] Tested: ${tested}/${temp.length} | Valid: ${validCount} (${successRate}%)`);
-            console.log(`[*] Speed: ${speed} proxies/sec | Batch time: ${batchTime.toFixed(1)}s | ETA: ${eta}s`);
-            
-            if (i + chunkSize < temp.length) {
-                console.log(`[*] Testing next batch of ${Math.min(chunkSize, temp.length - tested)} proxies...\n`);
-            }
+            console.log(`[*] Speed: ${speed} proxies/sec | Batch time: ${batchTime.toFixed(1)}s | ETA: ${eta}s\n`);
         }
         
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
