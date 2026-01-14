@@ -223,26 +223,59 @@ function addRealisticDelay() {
     });
 }
 
-async function testProxy(proxyUrl, timeout = 1500) {
+async function testProxy(proxyUrl, timeout = 1200) {
+    const testEndpoints = [
+        'http://1.1.1.1',
+        'http://8.8.8.8',
+        'http://www.google.com'
+    ];
+    
+    const endpoint = testEndpoints[Math.floor(Math.random() * testEndpoints.length)];
+    
     try {
-        const testPromise = (async () => {
-            const agent = proxyUrl.startsWith('https') 
-                ? new HttpsProxyAgent(proxyUrl)
-                : new HttpProxyAgent(proxyUrl);
-                
-            const response = await axios.get('http://1.1.1.1', {
-                httpAgent: agent,
-                httpsAgent: agent,
-                timeout: timeout,
-                validateStatus: () => true
-            });
-            
-            return [200, 201, 204, 301, 302, 303, 307, 308, 400, 401, 403, 404, 429].includes(response.status);
-        })();
+        const agent = proxyUrl.startsWith('https') 
+            ? new HttpsProxyAgent(proxyUrl)
+            : new HttpProxyAgent(proxyUrl);
         
-        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), timeout + 500));
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
         
-        return await Promise.race([testPromise, timeoutPromise]);
+        const response = await axios.get(endpoint, {
+            httpAgent: agent,
+            httpsAgent: agent,
+            timeout: timeout,
+            signal: controller.signal,
+            validateStatus: () => true,
+            maxRedirects: 3
+        });
+        
+        clearTimeout(timeoutId);
+        
+        return response.status >= 200 && response.status < 500;
+    } catch (error) {
+        return false;
+    }
+}
+
+async function quickTestProxy(proxyUrl) {
+    try {
+        const agent = proxyUrl.startsWith('https') 
+            ? new HttpsProxyAgent(proxyUrl)
+            : new HttpProxyAgent(proxyUrl);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 800);
+        
+        await axios.get('http://1.1.1.1', {
+            httpAgent: agent,
+            httpsAgent: agent,
+            timeout: 800,
+            signal: controller.signal,
+            validateStatus: () => true
+        });
+        
+        clearTimeout(timeoutId);
+        return true;
     } catch {
         return false;
     }
@@ -263,51 +296,105 @@ async function loadProxies(filePath = 'proxies.txt') {
         }
         
         console.log(`[*] Loading ${raw.length} proxies...`);
-        console.log('[!] IMPORTANT: Proxies MUST be working HTTP/HTTPS proxies');
-        console.log('[!] Format: ip:port or http://ip:port');
+        console.log('[!] IMPORTANT: Validating proxies with 3-phase system');
         
         const temp = raw.map(proxy => 
             proxy.startsWith('http') ? proxy : `http://${proxy}`
         );
         
-        console.log('[*] Testing proxies for working connections (REQUIRED)...');
-        console.log('[*] Using 100 parallel tests for reliable validation...');
-        console.log('[*] This may take 15-45 seconds depending on proxy quality...');
+        console.log('\n[PHASE 1/3] Quick connectivity test (300 parallel)...');
+        const phase1Start = Date.now();
+        const phase1Candidates = [];
         
-        let tested = 0;
-        let validCount = 0;
-        
-        const chunkSize = 100;
-        const totalBatches = Math.ceil(temp.length / chunkSize);
-        
+        const chunkSize = 300;
         for (let i = 0; i < temp.length; i += chunkSize) {
             const chunk = temp.slice(i, i + chunkSize);
-            const batchNum = Math.floor(i / chunkSize) + 1;
+            const progress = i + chunk.length;
             
-            console.log(`[*] Testing batch ${batchNum}/${totalBatches} (${chunk.length} proxies)...`);
+            const results = await Promise.allSettled(
+                chunk.map(proxy => quickTestProxy(proxy).then(valid => ({ proxy, valid })))
+            );
             
-            try {
-                const results = await Promise.all(
-                    chunk.map(async proxy => {
-                        const isValid = await testProxy(proxy, 1500);
-                        return { proxy, isValid };
-                    })
-                );
-                
-                results.forEach(({ proxy, isValid }) => {
-                    if (isValid) {
-                        config.proxies.push(proxy);
-                        validCount++;
-                    }
-                });
-                
-                tested += chunk.length;
-                console.log(`[+] Batch ${batchNum} complete: ${tested}/${temp.length} tested | ${validCount} working`);
-            } catch (err) {
-                console.log(`[!] Batch ${batchNum} failed, skipping...`);
-                tested += chunk.length;
-            }
+            results.forEach(result => {
+                if (result.status === 'fulfilled' && result.value.valid) {
+                    phase1Candidates.push(result.value.proxy);
+                }
+            });
+            
+            process.stdout.write(`\r[*] Phase 1: ${progress}/${temp.length} | Found: ${phase1Candidates.length} candidates`);
         }
+        
+        const phase1Time = ((Date.now() - phase1Start) / 1000).toFixed(1);
+        console.log(`\n[+] Phase 1 complete in ${phase1Time}s: ${phase1Candidates.length}/${temp.length} passed quick test\n`);
+        
+        if (phase1Candidates.length === 0) {
+            console.log('[!] NO PROXIES passed quick test!');
+            return false;
+        }
+        
+        console.log('[PHASE 2/3] Deep validation test (200 parallel)...');
+        const phase2Start = Date.now();
+        const phase2Validated = [];
+        
+        const chunk2Size = 200;
+        for (let i = 0; i < phase1Candidates.length; i += chunk2Size) {
+            const chunk = phase1Candidates.slice(i, i + chunk2Size);
+            const progress = i + chunk.length;
+            
+            const results = await Promise.allSettled(
+                chunk.map(proxy => testProxy(proxy, 1200).then(valid => ({ proxy, valid })))
+            );
+            
+            results.forEach(result => {
+                if (result.status === 'fulfilled' && result.value.valid) {
+                    phase2Validated.push(result.value.proxy);
+                }
+            });
+            
+            process.stdout.write(`\r[*] Phase 2: ${progress}/${phase1Candidates.length} | Validated: ${phase2Validated.length}`);
+        }
+        
+        const phase2Time = ((Date.now() - phase2Start) / 1000).toFixed(1);
+        console.log(`\n[+] Phase 2 complete in ${phase2Time}s: ${phase2Validated.length}/${phase1Candidates.length} passed validation\n`);
+        
+        if (phase2Validated.length === 0) {
+            console.log('[!] NO PROXIES passed deep validation!');
+            return false;
+        }
+        
+        console.log('[PHASE 3/3] Reliability test (150 parallel)...');
+        const phase3Start = Date.now();
+        
+        const chunk3Size = 150;
+        for (let i = 0; i < phase2Validated.length; i += chunk3Size) {
+            const chunk = phase2Validated.slice(i, i + chunk3Size);
+            const progress = i + chunk.length;
+            
+            const results = await Promise.allSettled(
+                chunk.map(async proxy => {
+                    const test1 = await testProxy(proxy, 1000);
+                    if (!test1) return { proxy, valid: false };
+                    
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    const test2 = await testProxy(proxy, 1000);
+                    
+                    return { proxy, valid: test2 };
+                })
+            );
+            
+            results.forEach(result => {
+                if (result.status === 'fulfilled' && result.value.valid) {
+                    config.proxies.push(result.value.proxy);
+                }
+            });
+            
+            process.stdout.write(`\r[*] Phase 3: ${progress}/${phase2Validated.length} | Reliable: ${config.proxies.length}`);
+        }
+        
+        const phase3Time = ((Date.now() - phase3Start) / 1000).toFixed(1);
+        const totalTime = ((Date.now() - phase1Start) / 1000).toFixed(1);
+        
+        console.log(`\n[+] Phase 3 complete in ${phase3Time}s: ${config.proxies.length}/${phase2Validated.length} are reliable\n`);
         
         if (config.proxies.length === 0) {
             console.log('[!] NO WORKING PROXIES FOUND!');
@@ -315,8 +402,13 @@ async function loadProxies(filePath = 'proxies.txt') {
             return false;
         }
         
-        console.log(`[+] Loaded ${config.proxies.length} WORKING proxies (removed ${temp.length - config.proxies.length} dead)`);
-        console.log('[+] Your real IP will be HIDDEN behind these proxies');
+        console.log('='.repeat(70));
+        console.log(`[+] VALIDATION COMPLETE in ${totalTime}s`);
+        console.log(`[+] Loaded ${config.proxies.length} RELIABLE proxies from ${temp.length} total`);
+        console.log(`[+] Survival rate: ${((config.proxies.length / temp.length) * 100).toFixed(1)}%`);
+        console.log(`[+] Your real IP will be HIDDEN behind these proxies`);
+        console.log('='.repeat(70));
+        
         return true;
     } catch (err) {
         console.log('[!] proxies.txt not found!');
